@@ -1,0 +1,16 @@
+# Cấu hình Load Balancer T22 - Môi trường Local Mock
+backends:
+  - id: "mock-node-1"
+    host: "127.0.0.1"
+    port: 9001
+    weight: 5
+
+  - id: "mock-node-2"
+    host: "127.0.0.1"
+    port: 9002
+    weight: 1
+
+  - id: "mock-node-3"
+    host: "127.0.0.1"
+    port: 9003
+    weight: 1
