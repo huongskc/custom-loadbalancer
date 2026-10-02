@@ -1,5 +1,5 @@
 """
-Mock Server Cluster for Load Balancer T22
+Mock Server Cluster for Load Balancer
 Khởi chạy đồng thời 3 backend HTTP độc lập (ports 9001, 9002, 9003) trong 1 tiến trình bất đồng bộ.
 Hỗ trợ kiểm tra sức khỏe (/healthz) và giả lập sự cố (/chaos/*) phục vụ kiểm thử Load Balancer.
 """

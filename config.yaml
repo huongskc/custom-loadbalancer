@@ -1,4 +1,9 @@
-# Cấu hình Load Balancer T22 - Môi trường Local Mock
+# Cấu hình Load Balancer - Môi trường Local Mock
+port: 8000
+timeout: 5.0
+max_retries: 2
+quarantine_seconds: 10.0
+
 backends:
   - id: "mock-node-1"
     host: "127.0.0.1"
