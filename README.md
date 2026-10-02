@@ -25,19 +25,37 @@ docker compose -f mock/docker-compose.mock.yaml up -d
 
 ---
 
-## 3. Chạy Kiểm thử (Tests)
+## 3. Khởi chạy Layer 7 Reverse Proxy Server
 
-### A. Kiểm thử Cụm Mock Server
+Khởi động bộ cân bằng tải tại cổng `:8000`:
+
+```bash
+python proxy.py
+```
+
+Proxy tự động nạp cấu hình `config.yaml`, điều phối lưu lượng đến 3 mock nodes và tự động chuyển vùng dự phòng (Passive Failover / Immediate Retry) khi có node gặp sự cố.
+
+---
+
+## 4. Chạy Kiểm thử (Tests)
+
+### A. Kiểm thử Bộ Cân bằng tải & Thuật toán
+Chạy toàn bộ 16 test cases (Base contract, Consistent Hashing, Reverse Proxy, Hop-by-hop stripping & Passive Failover):
+
+```bash
+python -m pytest tests/ -v
+```
+
+Hoặc chạy trực tiếp từng module test:
+```bash
+python tests/test_base.py
+python tests/test_consistent_hash.py
+python tests/test_proxy.py
+```
+
+### B. Kiểm thử Cụm Mock Server Cục bộ
 *(Yêu cầu cụm mock server đang chạy ở Bước 2)*
 
 ```bash
 python mock/test_mock.py
-```
-
-### B. Kiểm thử Thuật toán (Unit Tests)
-*(Chạy độc lập, không cần khởi động mock server)*
-
-- Chạy toàn bộ test qua `pytest`:
-```bash
-python -m pytest tests/ -v
 ```

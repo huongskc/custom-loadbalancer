@@ -1,5 +1,5 @@
 """
-Automated Verification for Mock Cluster (Milestone 1)
+Automated Verification for Mock Cluster
 Kịch bản kiểm thử tự động toàn diện cụm Mock Servers.
 Chạy trực tiếp: `python mock/test_mock.py` hoặc qua pytest: `python -m pytest mock/test_mock.py`
 """

@@ -1,5 +1,5 @@
 """
-Unit Tests for Consistent Hashing Balancer (Milestone 2.2 - feature/hashing)
+Unit Tests for Consistent Hashing Balancer
 Run: `python tests/test_consistent_hash.py` or `pytest tests/test_consistent_hash.py`
 """
 
