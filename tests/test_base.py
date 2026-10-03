@@ -108,6 +108,14 @@ def test_base_balancer_concrete_implementation():
     print("  [PASS] test_base_balancer_concrete_implementation")
 
 
+def test_explain_decision_default():
+    """Kiểm tra hook explain_decision mặc định trên BaseBalancer trả về chuỗi rỗng."""
+    b1 = Backend(id="node-1", host="127.0.0.1", port=9001)
+    balancer = DummyBalancer([b1])
+    assert balancer.explain_decision("192.168.1.1", b1) == ""
+    print("  [PASS] test_explain_decision_default")
+
+
 if __name__ == "__main__":
     print(">>> Running Base Balancer Tests...")
     test_backend_initialization()
@@ -115,4 +123,6 @@ if __name__ == "__main__":
     test_backend_track_connection_on_exception()
     test_base_balancer_is_abstract()
     test_base_balancer_concrete_implementation()
+    test_explain_decision_default()
     print(">>> ALL BASE TESTS PASSED [100%]\n")
+

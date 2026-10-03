@@ -37,10 +37,39 @@ Proxy tự động nạp cấu hình `config.yaml`, điều phối lưu lượng
 
 ---
 
-## 4. Chạy Kiểm thử (Tests)
+## 4. Bắn tải Thử nghiệm & Quản trị Chaos (Traffic & Chaos Testing)
 
-### A. Kiểm thử Bộ Cân bằng tải & Thuật toán
-Chạy toàn bộ 16 test cases (Base contract, Consistent Hashing, Reverse Proxy, Hop-by-hop stripping & Passive Failover):
+Khi cụm Mock Servers và Reverse Proxy đang chạy, mở các cửa sổ terminal mới để kiểm thử:
+
+### A. Bắn tải liên tục (Continuous Traffic Loop)
+
+```bash
+python scripts/test_traffic.py
+```
+
+### B. Quản trị Sự cố Độc lập (Independent Chaos Management)
+Mở một cửa sổ terminal riêng biệt để gõ lệnh làm sập, làm trễ hoặc phục hồi node và quan sát ngay phản ứng của Proxy và Client:
+
+```bash
+# Kiểm tra trạng thái các node
+python scripts/chaos.py status
+
+# Đánh sập node 9002 (trả về HTTP 500)
+python scripts/chaos.py down 9002
+
+# Khôi phục node 9002 (trả về HTTP 200)
+python scripts/chaos.py up 9002
+
+# Thêm 500ms delay cho node 9001
+python scripts/chaos.py delay 9001 500
+```
+
+---
+
+## 5. Chạy Kiểm thử Tự động (Automated Tests)
+
+### A. Kiểm thử Toàn diện Hệ thống
+Chạy toàn bộ 24 test cases tự động (Base contract, Consistent Hashing, Reverse Proxy, Failover, Traffic Simulation, Chaos CLI, Dynamic Recovery):
 
 ```bash
 python -m pytest tests/ -v
@@ -51,10 +80,11 @@ Hoặc chạy trực tiếp từng module test:
 python tests/test_base.py
 python tests/test_consistent_hash.py
 python tests/test_proxy.py
+python tests/test_traffic_sim.py
 ```
 
 ### B. Kiểm thử Cụm Mock Server Cục bộ
-*(Yêu cầu cụm mock server đang chạy ở Bước 2)*
+*(Yêu cầu cụm mock server đang chạy ở Mục 2)*
 
 ```bash
 python mock/test_mock.py
