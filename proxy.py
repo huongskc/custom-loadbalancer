@@ -50,7 +50,7 @@ async def quarantine_recovery(backend: Backend, delay: float, balancer: BaseBala
     """
     await asyncio.sleep(delay)
     balancer.update_backend_status(backend.id, True)
-    logger.info(f"Backend {backend.id} ({backend.url}) quarantine expired, re-enabled.")
+    logger.info(f"[HEALTH] Backend {backend.id} ({backend.url}) quarantine expired, re-enabled.")
 
 
 def filter_headers(headers: Dict[str, str]) -> Dict[str, str]:
@@ -110,11 +110,34 @@ async def handle_request(request: web.Request) -> web.Response:
                 ) as upstream:
                     resp_body = await upstream.read()
                     resp_headers = filter_headers(dict(upstream.headers))
+                    resp_headers["X-Balancer"] = balancer.name
+
+                    # Khi backend trả về lỗi máy chủ (5xx), kích hoạt failover và chuyển tiếp tức thì
+                    if upstream.status >= 500 and attempt < max_retries:
+                        logger.warning(
+                            f"[FAILOVER] Backend {backend.id} ({backend.url}) returned HTTP {upstream.status}. "
+                            f"Quarantined {quarantine_sec}s. Immediate retry {attempt + 1}/{max_retries + 1}."
+                        )
+                        balancer.update_backend_status(backend.id, False)
+                        asyncio.create_task(quarantine_recovery(backend, quarantine_sec, balancer))
+                        continue
+
+                    backend.requests_count += 1
+                    decision_ctx = balancer.explain_decision(client_ip, backend)
+                    algo_str = f" {decision_ctx}" if decision_ctx else ""
+                    logger.info(
+                        f"[PROXY] {request.method} {request.rel_url} [Client: {client_ip}]{algo_str} "
+                        f"-> {backend.id} ({upstream.status}) | Conns: {backend.active_conns} | Total: {backend.requests_count}"
+                    )
                     return web.Response(body=resp_body, status=upstream.status, headers=resp_headers)
+
 
         except (aiohttp.ClientConnectorError, aiohttp.ServerDisconnectedError, asyncio.TimeoutError) as exc:
             # Bắt lỗi mất kết nối mạng hoặc quá hạn: cách ly node hỏng và lập tức thử lại sang node khác
-            logger.warning(f"Backend {backend.id} ({backend.url}) connection failed: {exc}. Immediate retry {attempt + 1}/{max_retries + 1}.")
+            logger.warning(
+                f"[FAILOVER] Backend {backend.id} ({backend.url}) connection failed: {exc}. "
+                f"Quarantined {quarantine_sec}s. Immediate retry {attempt + 1}/{max_retries + 1}."
+            )
             balancer.update_backend_status(backend.id, False)
             asyncio.create_task(quarantine_recovery(backend, quarantine_sec, balancer))
             continue

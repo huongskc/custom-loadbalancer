@@ -20,6 +20,7 @@ class Backend:
     alive: bool = True
     active_conns: int = 0
     current_weight: int = 0  # Phục vụ thuật toán Smooth Weighted Round Robin
+    requests_count: int = 0  # Theo dõi tổng số request đã xử lý
 
     @property
     def url(self) -> str:
@@ -48,6 +49,7 @@ class Backend:
             "alive": self.alive,
             "active_conns": self.active_conns,
             "current_weight": self.current_weight,
+            "requests_count": self.requests_count,
         }
 
 
@@ -83,3 +85,11 @@ class BaseBalancer(ABC):
         Trả về None nếu không có node nào còn hoạt động.
         """
         pass
+
+    def explain_decision(self, client_ip: str = "", chosen: Optional[Backend] = None) -> str:
+        """
+        Hook đa hình: Trả về chuỗi giải thích ngắn gọn quyết định của thuật toán.
+        Mặc định trả về chuỗi rỗng để đảm bảo 100% tương thích ngược.
+        """
+        return ""
+

@@ -144,6 +144,17 @@ def test_x_forwarded_for_parsing():
     print("  [PASS] test_x_forwarded_for_parsing")
 
 
+def test_explain_decision():
+    """Kiểm tra explain_decision trả về mã băm hexa của Client IP."""
+    backends = [Backend(id="node-1", host="127.0.0.1", port=9001)]
+    lb = ConsistentHashBalancer(backends)
+    explanation = lb.explain_decision("192.168.1.10")
+    assert explanation.startswith("[Hash: 0x")
+    assert len(explanation) == 18  # [Hash: 0x12345678]
+    assert lb.explain_decision("") == ""
+    print("  [PASS] test_explain_decision")
+
+
 if __name__ == "__main__":
     print(">>> Running Consistent Hashing Tests...")
     test_determinism_sticky_routing()
@@ -152,4 +163,6 @@ if __name__ == "__main__":
     test_minimal_disruption_on_failover()
     test_all_nodes_down()
     test_x_forwarded_for_parsing()
+    test_explain_decision()
     print(">>> ALL CONSISTENT HASHING TESTS PASSED [100%]\n")
+

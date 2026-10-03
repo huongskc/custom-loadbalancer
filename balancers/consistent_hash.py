@@ -61,3 +61,13 @@ class ConsistentHashBalancer(BaseBalancer):
             idx = 0  # Quay tròn về điểm đầu tiên của ring (vòng tròn khép kín)
 
         return self._ring[self._sorted_keys[idx]]
+
+    def explain_decision(self, client_ip: str = "", chosen: Optional[Backend] = None) -> str:
+        """Giải thích quyết định: Mã băm 32-bit của Client IP trên vòng tròn băm."""
+        if not client_ip:
+            return ""
+        clean_ip = client_ip.split(",")[0].strip()
+        h = self._hash(clean_ip)
+        return f"[Hash: 0x{h:08x}]"
+
+
