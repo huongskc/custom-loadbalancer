@@ -52,7 +52,6 @@ def render_live_dashboard(
     """Dựng giao diện Live Terminal Dashboard thời gian thực với mô hình Clockwise Interval."""
     monitored_ips = ips or DEFAULT_CLIENT_IPS
     total = len(results)
-    elapsed = max(0.001, time.time() - start_time)
 
     # Tính RPS từ các event trong 5 giây gần nhất
     now = time.time()

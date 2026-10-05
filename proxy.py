@@ -72,6 +72,28 @@ def filter_headers(headers: Dict[str, str]) -> Dict[str, str]:
     return {k: v for k, v in headers.items() if k.lower() not in HOP_BY_HOP and k.lower() != "content-length"}
 
 
+def log_access_event(
+    req: web.Request,
+    client_ip: str,
+    node: str,
+    status: int,
+    algo: str,
+    decision: str = "",
+):
+    """Ghi nhận sự kiện truy cập chuẩn hóa dạng JSONL vào logs/access.log cho Dashboard."""
+    event_data = {
+        "ts": time.time(),
+        "method": req.method,
+        "path": req.rel_url.path,
+        "client_ip": client_ip,
+        "node": node,
+        "status": status,
+        "algo": algo,
+        "decision": decision,
+    }
+    access_logger.info(json.dumps(event_data))
+
+
 async def handle_request(request: web.Request) -> web.Response:
     """
     Hàm xử lý chính của Layer 7 Reverse Proxy:
@@ -108,17 +130,7 @@ async def handle_request(request: web.Request) -> web.Response:
         backend = balancer.get_backend(client_ip)
         if not backend:
             logger.warning("No healthy backend available to serve request.")
-            event_data = {
-                "ts": time.time(),
-                "method": request.method,
-                "path": request.rel_url.path,
-                "client_ip": client_ip,
-                "node": "None",
-                "status": 503,
-                "algo": balancer.name,
-                "decision": "NO_HEALTHY_BACKEND",
-            }
-            access_logger.info(json.dumps(event_data))
+            log_access_event(request, client_ip, "None", 503, balancer.name, "NO_HEALTHY_BACKEND")
             return web.json_response({"error": "No healthy backend available"}, status=503)
 
         try:
@@ -153,17 +165,7 @@ async def handle_request(request: web.Request) -> web.Response:
                         resp_headers["X-Balancer-Decision"] = decision_ctx
 
                     # Ghi nhận event vào logs/access.log phục vụ Dashboard quan sát độc lập
-                    event_data = {
-                        "ts": time.time(),
-                        "method": request.method,
-                        "path": request.rel_url.path,
-                        "client_ip": client_ip,
-                        "node": backend.id,
-                        "status": upstream.status,
-                        "algo": balancer.name,
-                        "decision": decision_ctx,
-                    }
-                    access_logger.info(json.dumps(event_data))
+                    log_access_event(request, client_ip, backend.id, upstream.status, balancer.name, decision_ctx)
 
                     logger.debug(
                         f"[PROXY] {request.method} {request.rel_url} [Client: {client_ip}] {decision_ctx} "
@@ -183,17 +185,7 @@ async def handle_request(request: web.Request) -> web.Response:
             continue
 
     # Khi toàn bộ các lượt thử lại đều thất bại
-    event_data = {
-        "ts": time.time(),
-        "method": request.method,
-        "path": request.rel_url.path,
-        "client_ip": client_ip,
-        "node": "None",
-        "status": 502,
-        "algo": balancer.name,
-        "decision": "ALL_RETRIES_FAILED",
-    }
-    access_logger.info(json.dumps(event_data))
+    log_access_event(request, client_ip, "None", 502, balancer.name, "ALL_RETRIES_FAILED")
     return web.json_response({"error": "All backend retry attempts failed"}, status=502)
 
 
@@ -242,8 +234,8 @@ def main():
     # Làm sạch access.log khi khởi động phiên Proxy mới
     access_log_path = Path("logs/access.log")
     access_log_path.parent.mkdir(exist_ok=True)
-    with open(access_log_path, "w", encoding="utf-8") as f:
-        f.truncate(0)
+    with open(access_log_path, "w", encoding="utf-8"):
+        pass
 
     logger.info(f"Starting Layer 7 Reverse Proxy on 0.0.0.0:{port}...")
     web.run_app(create_app(config), host="0.0.0.0", port=port)

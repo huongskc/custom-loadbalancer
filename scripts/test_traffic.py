@@ -123,7 +123,6 @@ async def run_traffic_continuous(
     Chỉ dừng khi người dùng nhấn Ctrl+C (KeyboardInterrupt).
     """
     ips = client_ips or DEFAULT_CLIENT_IPS
-    results: List[Dict] = []
     semaphore = asyncio.Semaphore(concurrency)
     stop_event = asyncio.Event()
 
@@ -144,7 +143,6 @@ async def run_traffic_continuous(
                 async def fire(cid: int, cip: str):
                     async with semaphore:
                         res = await send_single_request(session, target_url, cip, cid)
-                        results.append(res)
                         status_str = f"HTTP {res['status']}" if res['status'] > 0 else "FAIL"
                         print(f"[TRAFFIC #{cid + 1:>4}] Client: {cip:<15} -> {res['node']:<14} ({status_str:<8}) | {res['latency_ms']:5.1f}ms")
 
@@ -156,8 +154,6 @@ async def run_traffic_continuous(
 
         except (asyncio.CancelledError, KeyboardInterrupt):
             pass
-
-    return results
 
 
 async def main_async():
