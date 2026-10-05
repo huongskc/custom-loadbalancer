@@ -37,23 +37,28 @@ Proxy tự động nạp cấu hình `config.yaml`, điều phối lưu lượng
 
 ---
 
-## 4. Bắn tải Thử nghiệm & Quản trị Chaos (Traffic & Chaos Testing)
+## 4. Quan sát, Bắn tải & Quản trị Chaos (Observability & Testing)
 
-Khi cụm Mock Servers và Reverse Proxy đang chạy, mở các cửa sổ terminal mới để kiểm thử:
+Khi cụm Mock Servers và Reverse Proxy đang chạy, mở các cửa sổ terminal mới để quan sát và kiểm thử:
 
-### A. Bắn tải liên tục (Continuous Traffic Loop)
+### A. Màn hình Quan sát Trực quan (Live Terminal Dashboard)
+Mở một terminal riêng để quan sát phân bổ tải và khoảng chặn thuật toán Consistent Hashing theo thời gian thực (đọc từ `logs/access.log`):
+
+```bash
+python scripts/dashboard.py
+```
+
+### B. Bắn tải Thuần túy (Pure Traffic Generator)
+Mở một terminal khác để gửi luồng tải HTTP liên tục qua Reverse Proxy:
 
 ```bash
 python scripts/test_traffic.py
 ```
 
-### B. Quản trị Sự cố Độc lập (Independent Chaos Management)
-Mở một cửa sổ terminal riêng biệt để gõ lệnh làm sập, làm trễ hoặc phục hồi node và quan sát ngay phản ứng của Proxy và Client:
+### C. Quản trị Sự cố Độc lập (Independent Chaos Management)
+Mở một cửa sổ terminal để gõ lệnh làm sập, làm trễ hoặc phục hồi node và quan sát ngay phản ứng chuyển vùng tức thì (Immediate Retry) trên Dashboard:
 
 ```bash
-# Kiểm tra trạng thái các node
-python scripts/chaos.py status
-
 # Đánh sập node 9002 (trả về HTTP 500)
 python scripts/chaos.py down 9002
 

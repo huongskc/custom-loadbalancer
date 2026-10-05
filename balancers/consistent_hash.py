@@ -19,6 +19,7 @@ class ConsistentHashBalancer(BaseBalancer):
         super().__init__(backends, name="consistent_hash")
         self.vnodes = vnodes
         self._ring: Dict[int, Backend] = {}
+        self._ring_vnodes: Dict[int, str] = {}
         self._sorted_keys: List[int] = []
         self._build_ring()
 
@@ -29,6 +30,7 @@ class ConsistentHashBalancer(BaseBalancer):
     def _build_ring(self):
         """Xây dựng lại vòng tròn băm từ danh sách các node đang hoạt động (alive = True)."""
         self._ring.clear()
+        self._ring_vnodes.clear()
         for backend in self.get_alive_backends():
             # Số virtual nodes tỷ lệ thuận với trọng số của backend (mặc định weight=1 -> 100 vnodes)
             num_vnodes = self.vnodes * max(1, backend.weight)
@@ -36,6 +38,7 @@ class ConsistentHashBalancer(BaseBalancer):
                 vnode_key = f"{backend.id}#vn{i}"
                 h = self._hash(vnode_key)
                 self._ring[h] = backend
+                self._ring_vnodes[h] = vnode_key
 
         self._sorted_keys = sorted(self._ring.keys())
 
@@ -55,19 +58,35 @@ class ConsistentHashBalancer(BaseBalancer):
         clean_ip = client_ip.split(",")[0].strip() if client_ip else "127.0.0.1"
         h = self._hash(clean_ip)
 
-        # Tìm kiếm nhị phân vị trí khóa trên vòng tròn
-        idx = bisect.bisect_right(self._sorted_keys, h)
+        # Tìm kiếm nhị phân vị trí khóa trên vòng tròn: phần tử đầu tiên có hash >= h
+        idx = bisect.bisect_left(self._sorted_keys, h)
         if idx == len(self._sorted_keys):
             idx = 0  # Quay tròn về điểm đầu tiên của ring (vòng tròn khép kín)
 
         return self._ring[self._sorted_keys[idx]]
 
     def explain_decision(self, client_ip: str = "", chosen: Optional[Backend] = None) -> str:
-        """Giải thích quyết định: Mã băm 32-bit của Client IP trên vòng tròn băm."""
-        if not client_ip:
+        """
+        Giải thích quyết định theo khoảng chặn trên vòng băm:
+        [VNode_prev (hash) < IP (hash) <= VNode_cw (hash)]
+        Định dạng: prev_vnode|prev_hash|ip_hash|cw_vnode|cw_hash
+        """
+        if not client_ip or not self._sorted_keys:
             return ""
         clean_ip = client_ip.split(",")[0].strip()
-        h = self._hash(clean_ip)
-        return f"[Hash: 0x{h:08x}]"
+        ip_h = self._hash(clean_ip)
+
+        idx = bisect.bisect_left(self._sorted_keys, ip_h)
+        if idx == len(self._sorted_keys):
+            idx = 0
+
+        cw_hash = self._sorted_keys[idx]
+        cw_vnode = self._ring_vnodes.get(cw_hash, "unknown")
+
+        prev_idx = idx - 1 if idx > 0 else len(self._sorted_keys) - 1
+        prev_hash = self._sorted_keys[prev_idx]
+        prev_vnode = self._ring_vnodes.get(prev_hash, "unknown")
+
+        return f"{prev_vnode}|0x{prev_hash:08x}|0x{ip_h:08x}|{cw_vnode}|0x{cw_hash:08x}"
 
 
