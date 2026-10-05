@@ -1,20 +1,20 @@
 """
-Chaos Injection & Mock Cluster Management Tool for Load Balancer T22.
-Công cụ độc lập để giả lập sự cố (sập node, tăng độ trễ) và kiểm tra sức khỏe cụm Mock Servers.
+Chaos Injection Tool for Load Balancer T22.
+Công cụ độc lập để giả lập sự cố (sập node, tăng độ trễ) cho cụm Mock Servers.
 
 Cách dùng:
     python scripts/chaos.py down [port]       # Đánh sập node (mặc định port 9002)
     python scripts/chaos.py up [port]         # Khôi phục node (mặc định port 9002)
     python scripts/chaos.py delay [port] [ms] # Giả lập độ trễ xử lý (ms)
-    python scripts/chaos.py status            # Xem trạng thái sức khỏe toàn bộ cụm mock
 """
 
 import json
 import sys
-import urllib.error
 import urllib.request
 
-DEFAULT_PORTS = [9001, 9002, 9003]
+# Cấu hình UTF-8 an toàn cho console Windows
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
 def send_post(url: str) -> dict:
@@ -22,22 +22,6 @@ def send_post(url: str) -> dict:
     req = urllib.request.Request(url, data=b"", method="POST")
     with urllib.request.urlopen(req, timeout=3.0) as resp:
         return json.loads(resp.read().decode("utf-8"))
-
-
-def send_get(url: str) -> tuple[int, dict]:
-    """Gửi HTTP GET request bằng thư viện chuẩn urllib."""
-    try:
-        with urllib.request.urlopen(url, timeout=3.0) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            return resp.status, data
-    except urllib.error.HTTPError as e:
-        try:
-            data = json.loads(e.read().decode("utf-8"))
-        except Exception:
-            data = {"error": str(e)}
-        return e.code, data
-    except Exception as e:
-        return 0, {"error": str(e)}
 
 
 def cmd_down(port: int = 9002):
@@ -73,36 +57,12 @@ def cmd_delay(port: int = 9002, delay_ms: float = 500.0):
         print(f"\n[ERROR] Không thể kết nối tới node tại cổng {port}: {e}\n")
 
 
-def cmd_status():
-    """Kiểm tra và hiển thị trạng thái sức khỏe của toàn bộ cụm mock servers."""
-    print("\n+========================= MOCK CLUSTER STATUS =========================+")
-    print("| Backend Node  | Address         | HTTP Status | State  | Total Requests|")
-    print("+---------------+-----------------+-------------+--------+---------------+ ")
-    for port in DEFAULT_PORTS:
-        url = f"http://127.0.0.1:{port}/healthz"
-        status, data = send_get(url)
-        node_name = data.get("node", f"node-{port}")
-        state = data.get("status", "DOWN" if status != 200 else "UP")
-        if status == 0:
-            status_str = "UNREACHABLE"
-            state_str = "DEAD"
-            total_reqs = "-"
-        else:
-            status_str = f"{status} OK" if status == 200 else f"{status} ERR"
-            state_str = state
-            total_reqs = str(data.get("requests", "-"))
-
-        print(f"| {node_name:<13} | 127.0.0.1:{port:<6} | {status_str:<11} | {state_str:<6} | {total_reqs:<13} |")
-    print("+---------------+-----------------+-------------+--------+---------------+\n")
-
-
 def print_usage():
     print("""
 Sử dụng:
     python scripts/chaos.py down [port]        - Đánh sập node (mặc định 9002)
     python scripts/chaos.py up [port]          - Khôi phục node (mặc định 9002)
     python scripts/chaos.py delay [port] [ms]  - Giả lập độ trễ (mặc định 9002, 500ms)
-    python scripts/chaos.py status             - Xem trạng thái cụm mock servers
 """)
 
 
@@ -121,8 +81,6 @@ def main():
     elif action == "delay":
         ms = float(sys.argv[3]) if len(sys.argv) > 3 else 500.0
         cmd_delay(port, ms)
-    elif action == "status":
-        cmd_status()
     else:
         print(f"Hành động không hợp lệ: {action}")
         print_usage()

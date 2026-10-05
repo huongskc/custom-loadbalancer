@@ -145,14 +145,45 @@ def test_x_forwarded_for_parsing():
 
 
 def test_explain_decision():
-    """Kiểm tra explain_decision trả về mã băm hexa của Client IP."""
+    """Kiểm tra explain_decision trả về 5 thành phần khoảng chặn trên vòng băm (prev_vn|prev_h|ip_h|cw_vn|cw_h)."""
     backends = [Backend(id="node-1", host="127.0.0.1", port=9001)]
     lb = ConsistentHashBalancer(backends)
     explanation = lb.explain_decision("192.168.1.10")
-    assert explanation.startswith("[Hash: 0x")
-    assert len(explanation) == 18  # [Hash: 0x12345678]
+    parts = explanation.split("|")
+    assert len(parts) == 5, f"Kỳ vọng 5 thành phần prev_vn|prev_h|ip_h|cw_vn|cw_h, nhận: {explanation}"
+    prev_vn, prev_h, ip_h, cw_vn, cw_h = parts
+    assert prev_vn.startswith("node-1#vn")
+    assert prev_h.startswith("0x") and len(prev_h) == 10
+    assert ip_h.startswith("0x") and len(ip_h) == 10
+    assert cw_vn.startswith("node-1#vn")
+    assert cw_h.startswith("0x") and len(cw_h) == 10
     assert lb.explain_decision("") == ""
     print("  [PASS] test_explain_decision")
+
+
+def test_bisect_left_exact_match():
+    """Kiểm chứng bisect_left: Khi hash(key) trùng khít với hash của một vnode, key phải ánh xạ trúng vnode đó."""
+    b1 = Backend(id="node-1", host="127.0.0.1", port=9001)
+    b2 = Backend(id="node-2", host="127.0.0.1", port=9002)
+    lb = ConsistentHashBalancer([b1, b2], vnodes=10)
+
+    # Chọn một vnode bất kỳ trên ring và lấy hash của nó
+    target_hash = lb._sorted_keys[5]
+    expected_backend = lb._ring[target_hash]
+
+    # Giả lập client_ip có mã băm trùng khít với target_hash
+    original_hash = lb._hash
+    lb._hash = lambda k: target_hash if k == "exact-match-ip" else original_hash(k)
+
+    chosen = lb.get_backend("exact-match-ip")
+    assert chosen.id == expected_backend.id
+
+    # Kiểm tra giải thích thuật toán cũng phải chỉ đúng vào vnode có hash bằng target_hash
+    explanation = lb.explain_decision("exact-match-ip")
+    parts = explanation.split("|")
+    cw_hash = int(parts[4], 16)
+    assert cw_hash == target_hash
+    print("  [PASS] test_bisect_left_exact_match")
 
 
 if __name__ == "__main__":
@@ -164,5 +195,6 @@ if __name__ == "__main__":
     test_all_nodes_down()
     test_x_forwarded_for_parsing()
     test_explain_decision()
+    test_bisect_left_exact_match()
     print(">>> ALL CONSISTENT HASHING TESTS PASSED [100%]\n")
 
