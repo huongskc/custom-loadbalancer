@@ -56,9 +56,12 @@ def test_track_connection_affects_choice():
 
 
 def test_explain_decision_has_no_pipe():
-    lb = LeastConnectionsBalancer(_make(1, 1))
+    b = _make(1, 1)
+    lb = LeastConnectionsBalancer(b)
     exp = lb.explain_decision("1.2.3.4")
     assert "|" not in exp and "node-1=0/w1" in exp
+    exp_chosen = lb.explain_decision("1.2.3.4", chosen=b[0])
+    assert "|" not in exp_chosen and "node-1" in exp_chosen and "score=0.00" in exp_chosen
     print("  [PASS] test_explain_decision_has_no_pipe")
 
 

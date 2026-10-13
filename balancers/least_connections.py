@@ -31,6 +31,12 @@ class LeastConnectionsBalancer(BaseBalancer):
 
     def explain_decision(self, client_ip: str = "", chosen: Optional[Backend] = None) -> str:
         # Không dùng ký tự '|' vì dashboard dành '|' cho định dạng 5 phần của consistent hash
-        return "conns: " + ", ".join(
-            f"{b.id}={b.active_conns}/w{b.weight}" for b in self.get_alive_backends()
-        )
+        alive = self.get_alive_backends()
+        if not alive:
+            return "LEAST_CONN[no_alive_backend]"
+
+        conns_info = ", ".join(f"{b.id}={b.active_conns}/w{b.weight}" for b in alive)
+        if chosen:
+            score = self._score(chosen)
+            return f"LEAST_CONN[{chosen.id} score={score:.2f} ({conns_info})]"
+        return "conns: " + conns_info

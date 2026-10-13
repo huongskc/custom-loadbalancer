@@ -146,8 +146,10 @@ def render_live_dashboard(
             expr_str = f"[{current_node}]"
 
         # Định dạng trạng thái dính / failover
-        if detected_algo in ("round_robin", "least_connections"):
+        if detected_algo == "round_robin":
             state_str = "[ROTATING]"
+        elif detected_algo == "least_connections":
+            state_str = "[DYNAMIC]"
         elif current_node == baseline and is_steady:
             state_str = "(ACTIVE | STICKY)"
         elif current_node != baseline:
