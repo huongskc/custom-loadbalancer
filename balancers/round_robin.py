@@ -1,34 +1,32 @@
-class RoundRobinBalancer:
-    def __init__(self, nodes=None):
-        self.nodes = nodes if nodes is not None else []
+from typing import List, Optional
+from .base import Backend, BaseBalancer
+
+
+class RoundRobinBalancer(BaseBalancer):
+    def __init__(self, backends: Optional[List[Backend]] = None):
+        super().__init__(backends or [], name="round_robin")
         self.current_index = 0
 
-    def get_node(self, request_key=None):
+    def get_backend(self, client_ip: str = "") -> Optional[Backend]:
         """
-        Trả về node tiếp theo trong danh sách một cách tuần tự.
-        Tham số request_key giữ nguyên để có cùng interface với Consistent Hashing, 
-        dù Round Robin không thực sự dùng đến nó.
+        Trả về backend tiếp theo trong danh sách các node đang hoạt động (alive = True) một cách tuần tự.
         """
-        if not self.nodes:
+        alive_backends = self.get_alive_backends()
+        if not alive_backends:
             return None
-        
-        # Lấy node hiện tại
-        node = self.nodes[self.current_index]
-        
+
+        # Lấy backend hiện tại theo modulo số lượng backend đang sống
+        backend = alive_backends[self.current_index % len(alive_backends)]
+
         # Cập nhật con trỏ index để vòng lại từ đầu nếu đã đến cuối danh sách
-        self.current_index = (self.current_index + 1) % len(self.nodes)
-        
-        return node
+        self.current_index = (self.current_index + 1) % len(alive_backends)
 
-    def add_node(self, node):
-        """Thêm node mới vào danh sách xoay vòng"""
-        if node not in self.nodes:
-            self.nodes.append(node)
+        return backend
 
-    def remove_node(self, node):
-        """Loại bỏ node khi có sự cố"""
-        if node in self.nodes:
-            self.nodes.remove(node)
-            # Điều chỉnh lại index nếu node bị xóa làm danh sách ngắn đi
-            if self.current_index >= len(self.nodes):
-                self.current_index = 0
+    def explain_decision(self, client_ip: str = "", chosen: Optional[Backend] = None) -> str:
+        """Giải trình bước xoay vòng phục vụ Dashboard và Header X-Balancer-Decision."""
+        alive = self.get_alive_backends()
+        if not chosen or not alive:
+            return "ROUND_ROBIN[no_alive_backend]"
+        pos = alive.index(chosen) + 1 if chosen in alive else "?"
+        return f"ROUND_ROBIN[step={pos}/{len(alive)}->{chosen.id}]"

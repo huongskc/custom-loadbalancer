@@ -21,4 +21,4 @@ backends:
     weight: 1
 
 balancer:
-  algorithm: "round_robin" # hoặc "consistent_hashing"
+  algorithm: "round_robin" # Tuỳ chọn: "round_robin" hoặc "consistent_hash"

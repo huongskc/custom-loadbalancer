@@ -205,7 +205,7 @@ def create_app(
             Backend(id=b["id"], host=b["host"], port=b["port"], weight=b.get("weight", 1))
             for b in config.get("backends", [])
         ]
-        algo_config = config.get("balancer", {}).get("algorithm", "consistent_hashing")
+        algo_config = config.get("balancer", {}).get("algorithm", "consistent_hash")
         
         if algo_config == "round_robin":
             balancer = RoundRobinBalancer(backends)

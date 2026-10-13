@@ -4,5 +4,6 @@ Balancers package for Load Balancer T22
 
 from .base import Backend, BaseBalancer
 from .consistent_hash import ConsistentHashBalancer
+from .round_robin import RoundRobinBalancer
 
-__all__ = ["Backend", "BaseBalancer", "ConsistentHashBalancer"]
+__all__ = ["Backend", "BaseBalancer", "ConsistentHashBalancer", "RoundRobinBalancer"]
