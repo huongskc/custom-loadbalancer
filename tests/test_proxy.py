@@ -254,6 +254,86 @@ def test_proxy_quarantine_recovery():
     print("  [PASS] test_proxy_quarantine_recovery")
 
 
+def test_proxy_change_algorithm_success():
+    """Kiểm thử Control API POST /api/algorithm chuyển đổi thuật toán thành công và làm sạch log."""
+    async def _test():
+        runner1, port1 = await start_mock_backend("mock-1")
+        backends = [Backend(id="mock-1", host="127.0.0.1", port=port1, weight=1)]
+        lb = ConsistentHashBalancer(backends)
+        proxy_runner, proxy_url = await start_proxy_server(lb)
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                # 1. Ban đầu đang là consistent_hash
+                async with session.get(f"{proxy_url}/test") as resp:
+                    assert resp.status == 200
+                    assert resp.headers.get("X-Balancer") == "consistent_hash"
+
+                # 2. Gửi request đổi sang round_robin
+                payload = {"algorithm": "round_robin"}
+                async with session.post(f"{proxy_url}/api/algorithm", json=payload) as resp:
+                    assert resp.status == 200
+                    data = await resp.json()
+                    assert data["status"] == "ok"
+                    assert data["algorithm"] == "round_robin"
+
+                # 3. Request tiếp theo phải dùng thuật toán mới round_robin
+                async with session.get(f"{proxy_url}/test") as resp:
+                    assert resp.status == 200
+                    assert resp.headers.get("X-Balancer") == "round_robin"
+
+                # 4. Tiếp tục đổi sang least_connections
+                payload = {"algorithm": "least_connections"}
+                async with session.post(f"{proxy_url}/api/algorithm", json=payload) as resp:
+                    assert resp.status == 200
+                    data = await resp.json()
+                    assert data["status"] == "ok"
+                    assert data["algorithm"] == "least_connections"
+
+                async with session.get(f"{proxy_url}/test") as resp:
+                    assert resp.status == 200
+                    assert resp.headers.get("X-Balancer") == "least_connections"
+        finally:
+            await proxy_runner.cleanup()
+            await runner1.cleanup()
+
+    asyncio.run(_test())
+    print("  [PASS] test_proxy_change_algorithm_success")
+
+
+def test_proxy_change_algorithm_invalid():
+    """Kiểm thử Control API POST /api/algorithm khi truyền dữ liệu sai -> Trả về HTTP 400."""
+    async def _test():
+        b1 = Backend(id="b1", host="127.0.0.1", port=9001)
+        lb = ConsistentHashBalancer([b1])
+        proxy_runner, proxy_url = await start_proxy_server(lb)
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                # 1. Thuật toán không tồn tại
+                payload = {"algorithm": "invalid_algo"}
+                async with session.post(f"{proxy_url}/api/algorithm", json=payload) as resp:
+                    assert resp.status == 400
+                    data = await resp.json()
+                    assert "error" in data
+                    assert "available" in data
+
+                # 2. Body không phải JSON
+                async with session.post(
+                    f"{proxy_url}/api/algorithm",
+                    data="invalid_raw_string",
+                    headers={"Content-Type": "application/json"},
+                ) as resp:
+                    assert resp.status == 400
+                    data = await resp.json()
+                    assert data.get("error") == "Invalid JSON body"
+        finally:
+            await proxy_runner.cleanup()
+
+    asyncio.run(_test())
+    print("  [PASS] test_proxy_change_algorithm_invalid")
+
+
 if __name__ == "__main__":
     print("\n--- RUNNING REVERSE PROXY & PASSIVE FAILOVER INTEGRATION TESTS ---")
     test_proxy_forward_get_and_post()
@@ -261,4 +341,6 @@ if __name__ == "__main__":
     test_proxy_passive_failover_immediate_retry()
     test_proxy_all_backends_down()
     test_proxy_quarantine_recovery()
-    print("--- ALL 5 PROXY INTEGRATION TESTS PASSED SUCCESSFULLY! ---\n")
+    test_proxy_change_algorithm_success()
+    test_proxy_change_algorithm_invalid()
+    print("--- ALL 7 PROXY INTEGRATION TESTS PASSED SUCCESSFULLY! ---\n")

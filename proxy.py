@@ -197,6 +197,57 @@ async def handle_request(request: web.Request) -> web.Response:
     return web.json_response({"error": "All backend retry attempts failed"}, status=502)
 
 
+async def handle_change_algorithm(request: web.Request) -> web.Response:
+    """
+    Control API: Chuyển đổi thuật toán cân bằng tải tại runtime (Clean Slate).
+    Tái tạo danh sách Backend mới tinh từ config (alive=True, active_conns=0) và làm sạch access.log.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+
+    new_algo = data.get("algorithm")
+    if not new_algo or new_algo not in ALGORITHMS:
+        return web.json_response({
+            "error": f"Invalid algorithm '{new_algo}'",
+            "available": list(ALGORITHMS.keys()),
+        }, status=400)
+
+    # Clean Slate: Tái tạo danh sách Backend mới tinh từ config hoặc balancer hiện tại
+    config = request.app[CONFIG_KEY]
+    raw_backends = config.get("backends", [])
+    if raw_backends:
+        backends = [
+            Backend(id=b["id"], host=b["host"], port=b["port"], weight=b.get("weight", 1))
+            for b in raw_backends
+        ]
+    else:
+        current_lb = request.app.get(BALANCER_KEY)
+        backends = [
+            Backend(id=b.id, host=b.host, port=b.port, weight=b.weight)
+            for b in (current_lb.backends if current_lb else [])
+        ]
+    new_balancer_cls = ALGORITHMS[new_algo]
+    new_balancer = new_balancer_cls(backends)
+    if hasattr(request.app, "_state"):
+        request.app._state[BALANCER_KEY] = new_balancer
+    else:
+        request.app[BALANCER_KEY] = new_balancer
+
+    # Làm sạch access.log để Dashboard đếm thống kê lại từ đầu cho thuật toán mới
+    access_log_path = LOGS_DIR / "access.log"
+    with open(access_log_path, "w", encoding="utf-8"):
+        pass
+
+    logger.info(f"[CONTROL] Algorithm switched to '{new_algo}' (Clean Slate: backends & access.log reset)")
+    return web.json_response({
+        "status": "ok",
+        "algorithm": new_algo,
+        "message": f"Successfully switched to {new_algo}",
+    })
+
+
 def create_app(
     config: Optional[dict] = None,
     balancer: Optional[BaseBalancer] = None,
@@ -232,6 +283,9 @@ def create_app(
 
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
+
+    # Đăng ký Control API trước catch-all route
+    app.router.add_post("/api/algorithm", handle_change_algorithm)
 
     # Đăng ký bắt toàn bộ mọi HTTP methods và URL paths
     app.router.add_route("*", "/{path:.*}", handle_request)
