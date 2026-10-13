@@ -16,9 +16,11 @@ import yaml
 from balancers.base import Backend, BaseBalancer
 from balancers.consistent_hash import ConsistentHashBalancer
 from balancers.least_connections import LeastConnectionsBalancer
+from balancers.round_robin import RoundRobinBalancer
 
 ALGORITHMS = {
     "consistent_hash": ConsistentHashBalancer,
+    "round_robin": RoundRobinBalancer,
     "least_connections": LeastConnectionsBalancer,
 }
 
@@ -211,7 +213,7 @@ def create_app(
             Backend(id=b["id"], host=b["host"], port=b["port"], weight=b.get("weight", 1))
             for b in config.get("backends", [])
         ]
-        algo = config.get("algorithm", "consistent_hash")
+        algo = config.get("balancer", {}).get("algorithm") or config.get("algorithm", "consistent_hash")
         if algo not in ALGORITHMS:
             raise ValueError(f"Unknown algorithm '{algo}'. Available: {list(ALGORITHMS)}")
         balancer = ALGORITHMS[algo](backends)
