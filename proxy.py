@@ -15,7 +15,15 @@ import yaml
 
 from balancers.base import Backend, BaseBalancer
 from balancers.consistent_hash import ConsistentHashBalancer
+from balancers.least_connections import LeastConnectionsBalancer
 from balancers.round_robin import RoundRobinBalancer
+
+ALGORITHMS = {
+    "consistent_hash": ConsistentHashBalancer,
+    "round_robin": RoundRobinBalancer,
+    "least_connections": LeastConnectionsBalancer,
+}
+
 # Cấu hình log chuẩn cho Proxy (Terminal output chỉ hiện WARNING/INFO quan trọng, không in per-request)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("proxy")
@@ -205,12 +213,10 @@ def create_app(
             Backend(id=b["id"], host=b["host"], port=b["port"], weight=b.get("weight", 1))
             for b in config.get("backends", [])
         ]
-        algo_config = config.get("balancer", {}).get("algorithm", "consistent_hash")
-        
-        if algo_config == "round_robin":
-            balancer = RoundRobinBalancer(backends)
-        else:
-            balancer = ConsistentHashBalancer(backends)
+        algo = config.get("balancer", {}).get("algorithm") or config.get("algorithm", "consistent_hash")
+        if algo not in ALGORITHMS:
+            raise ValueError(f"Unknown algorithm '{algo}'. Available: {list(ALGORITHMS)}")
+        balancer = ALGORITHMS[algo](backends)
 
     app = web.Application()
     app[CONFIG_KEY], app[BALANCER_KEY], app[SESSION_KEY] = config, balancer, session
