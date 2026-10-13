@@ -10,3 +10,5 @@ htmlcov/
 env/
 venv/
 logs/
+
+.idea/

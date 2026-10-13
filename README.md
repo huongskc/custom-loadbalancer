@@ -1,5 +1,9 @@
 # Load Balancer
 
+Hỗ trợ 2 thuật toán cân bằng tải, chọn qua khóa `algorithm` trong `config.yaml`:
+- `consistent_hash`: Consistent Hashing với Virtual Nodes (dính theo Client IP)
+- `least_connections`: Weighted Least Connections (chọn node có `active_conns / weight` nhỏ nhất)
+
 ## 1. Cài đặt môi trường
 
 Yêu cầu: Python 3.10 trở lên.
@@ -31,6 +35,12 @@ Khởi động bộ cân bằng tải tại cổng `:8000`:
 
 ```bash
 python proxy.py
+```
+
+Chọn thuật toán trong `config.yaml`:
+
+```yaml
+algorithm: least_connections   # hoặc: consistent_hash (mặc định nếu bỏ trống)
 ```
 
 Proxy tự động nạp cấu hình `config.yaml`, điều phối lưu lượng đến 3 mock nodes và tự động chuyển vùng dự phòng (Passive Failover / Immediate Retry) khi có node gặp sự cố.
@@ -69,12 +79,20 @@ python scripts/chaos.py up 9002
 python scripts/chaos.py delay 9001 500
 ```
 
+### D. Demo Least Connections
+Làm chậm một node rồi bắn tải đồng thời để thấy node đó nhận ít request hơn:
+
+```bash
+python scripts/chaos.py delay 9001 500
+python scripts/test_traffic.py --concurrency 8 --delay 0.05
+```
+
 ---
 
 ## 5. Chạy Kiểm thử Tự động (Automated Tests)
 
 ### A. Kiểm thử Toàn diện Hệ thống
-Chạy toàn bộ 24 test cases tự động (Base contract, Consistent Hashing, Reverse Proxy, Failover, Traffic Simulation, Chaos CLI, Dynamic Recovery):
+Chạy toàn bộ 33 test cases tự động (Base contract, Consistent Hashing, Least Connections, Reverse Proxy, Failover, Traffic Simulation, Chaos CLI, Dynamic Recovery):
 
 ```bash
 python -m pytest tests/ -v
@@ -84,6 +102,7 @@ Hoặc chạy trực tiếp từng module test:
 ```bash
 python tests/test_base.py
 python tests/test_consistent_hash.py
+python tests/test_least_connections.py
 python tests/test_proxy.py
 python tests/test_traffic_sim.py
 ```

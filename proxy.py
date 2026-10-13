@@ -15,6 +15,12 @@ import yaml
 
 from balancers.base import Backend, BaseBalancer
 from balancers.consistent_hash import ConsistentHashBalancer
+from balancers.least_connections import LeastConnectionsBalancer
+
+ALGORITHMS = {
+    "consistent_hash": ConsistentHashBalancer,
+    "least_connections": LeastConnectionsBalancer,
+}
 
 # Cấu hình log chuẩn cho Proxy (Terminal output chỉ hiện WARNING/INFO quan trọng, không in per-request)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -205,7 +211,10 @@ def create_app(
             Backend(id=b["id"], host=b["host"], port=b["port"], weight=b.get("weight", 1))
             for b in config.get("backends", [])
         ]
-        balancer = ConsistentHashBalancer(backends)
+        algo = config.get("algorithm", "consistent_hash")
+        if algo not in ALGORITHMS:
+            raise ValueError(f"Unknown algorithm '{algo}'. Available: {list(ALGORITHMS)}")
+        balancer = ALGORITHMS[algo](backends)
 
     app = web.Application()
     app[CONFIG_KEY], app[BALANCER_KEY], app[SESSION_KEY] = config, balancer, session

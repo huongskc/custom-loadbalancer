@@ -146,7 +146,7 @@ def render_live_dashboard(
             expr_str = f"[{current_node}]"
 
         # Định dạng trạng thái dính / failover
-        if detected_algo == "round_robin":
+        if detected_algo in ("round_robin", "least_connections"):
             state_str = "[ROTATING]"
         elif current_node == baseline and is_steady:
             state_str = "(ACTIVE | STICKY)"
@@ -203,7 +203,7 @@ def run_dashboard_loop(log_file: str = "logs/access.log", refresh_interval: floa
                 start_time=start_time,
                 target_url=str(log_path),
             )
-            sys.stdout.write("\033[H\033[J" + output + "\n")
+            sys.stdout.write("\033[H\033[2J\033[3J" + output + "\n")
             sys.stdout.flush()
             time.sleep(refresh_interval)
     except KeyboardInterrupt:
