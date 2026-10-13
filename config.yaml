@@ -19,3 +19,6 @@ backends:
     host: "127.0.0.1"
     port: 9003
     weight: 1
+
+balancer:
+  algorithm: "round_robin" # Tuỳ chọn: "round_robin" hoặc "consistent_hash"
