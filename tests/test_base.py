@@ -24,7 +24,6 @@ def test_backend_initialization():
     assert b.weight == 5
     assert b.alive is True
     assert b.active_conns == 0
-    assert b.current_weight == 0
     assert b.url == "http://127.0.0.1:9001"
 
     data = b.to_dict()

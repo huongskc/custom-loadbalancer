@@ -213,7 +213,7 @@ def run_dashboard_loop(log_file: str = "logs/access.log", refresh_interval: floa
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Standalone Live Terminal Dashboard for Load Balancer T22")
+    parser = argparse.ArgumentParser(description="Standalone Live Terminal Dashboard for Load Balancer")
     parser.add_argument("--log", default="logs/access.log", help="Đường dẫn file access log của Proxy")
     parser.add_argument("--interval", type=float, default=0.5, help="Tần suất làm mới giao diện (giây, mặc định 0.5s)")
     args = parser.parse_args()

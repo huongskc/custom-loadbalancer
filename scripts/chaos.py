@@ -1,5 +1,5 @@
 """
-Chaos Injection Tool for Load Balancer T22.
+Chaos Injection Tool for Load Balancer.
 Công cụ độc lập để giả lập sự cố (sập node, tăng độ trễ) cho cụm Mock Servers.
 
 Cách dùng:

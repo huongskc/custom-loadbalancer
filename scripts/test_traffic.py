@@ -54,7 +54,7 @@ async def send_single_request(
 ) -> Dict:
     """Gửi một HTTP request kèm header X-Forwarded-For và ghi nhận kết quả."""
     start_time = time.perf_counter()
-    headers = {"X-Forwarded-For": client_ip, "Host": "food.myproject.bar"}
+    headers = {"X-Forwarded-For": client_ip}
     try:
         async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5.0)) as resp:
             await resp.read()

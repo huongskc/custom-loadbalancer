@@ -18,11 +18,6 @@ Khởi động đồng thời 3 máy chủ HTTP backend độc lập tại các 
 python mock/mock_servers.py
 ```
 
-*(Tùy chọn chạy bằng Docker Compose)*
-```bash
-docker compose -f mock/docker-compose.mock.yaml up -d
-```
-
 ---
 
 ## 3. Khởi chạy Layer 7 Reverse Proxy Server

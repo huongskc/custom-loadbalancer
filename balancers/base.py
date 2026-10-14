@@ -19,7 +19,6 @@ class Backend:
     weight: int = 1
     alive: bool = True
     active_conns: int = 0
-    current_weight: int = 0  # Phục vụ thuật toán Smooth Weighted Round Robin
     requests_count: int = 0  # Theo dõi tổng số request đã xử lý
 
     @property
@@ -48,7 +47,6 @@ class Backend:
             "weight": self.weight,
             "alive": self.alive,
             "active_conns": self.active_conns,
-            "current_weight": self.current_weight,
             "requests_count": self.requests_count,
         }
 

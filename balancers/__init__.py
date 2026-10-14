@@ -1,5 +1,5 @@
 """
-Balancers package for Load Balancer T22
+Balancers package for Load Balancer
 """
 
 from .base import Backend, BaseBalancer
