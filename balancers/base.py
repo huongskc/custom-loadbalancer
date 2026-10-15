@@ -92,6 +92,37 @@ class BaseBalancer(ABC):
         """Hook được kích hoạt khi trạng thái backend thay đổi (dành cho Consistent Hash rebuild ring)."""
         pass
 
+    def add_backend(self, backend: Backend) -> bool:
+        """
+        Thêm một backend mới vào cụm cân bằng tải tại runtime.
+        Trả về False nếu ID hoặc cặp host:port đã tồn tại.
+        """
+        for b in self.backends:
+            if b.id == backend.id or (b.host == backend.host and b.port == backend.port):
+                return False
+        self.backends.append(backend)
+        self.on_backends_updated()
+        return True
+
+    def update_backend_weight(self, backend_id: str, weight: int) -> bool:
+        """
+        Cập nhật trọng số của backend và kích hoạt hook cập nhật thuật toán.
+        Trả về True nếu cập nhật thành công, False nếu không tìm thấy backend.
+        """
+        for b in self.backends:
+            if b.id == backend_id:
+                b.weight = max(1, int(weight))
+                self.on_backends_updated()
+                return True
+        return False
+
+    def get_backend_by_id(self, backend_id: str) -> Optional[Backend]:
+        """Tìm backend theo ID."""
+        for b in self.backends:
+            if b.id == backend_id:
+                return b
+        return None
+
     @abstractmethod
     def get_backend(self, client_ip: str = "") -> Optional[Backend]:
         """

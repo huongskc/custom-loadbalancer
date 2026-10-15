@@ -247,6 +247,78 @@ async def handle_change_algorithm(request: web.Request) -> web.Response:
     })
 
 
+async def handle_manage_backend(request: web.Request) -> web.Response:
+    """
+    Control API: Quản lý thêm backend node hoặc cập nhật trọng số tại runtime.
+    - action: "add" -> Thêm backend node mới (yêu cầu id, port, optional host, optional weight)
+    - action: "weight" -> Cập nhật trọng số của backend node (yêu cầu id, weight)
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+
+    action = data.get("action", "add")
+    balancer: BaseBalancer = request.app[BALANCER_KEY]
+
+    if action == "add":
+        b_id = data.get("id")
+        port = data.get("port")
+        host = data.get("host", "127.0.0.1")
+        weight = int(data.get("weight", 1))
+
+        if not b_id or not port:
+            return web.json_response({"error": "Missing required fields: 'id' and 'port'"}, status=400)
+
+        new_backend = Backend(id=str(b_id), host=str(host), port=int(port), weight=max(1, weight))
+        success = balancer.add_backend(new_backend)
+        if not success:
+            return web.json_response({"error": f"Backend with id '{b_id}' or port {port} already exists"}, status=400)
+
+        # Cập nhật danh sách backends trong app[CONFIG_KEY] để giữ lại node khi chuyển đổi thuật toán
+        cfg_backends = request.app[CONFIG_KEY].setdefault("backends", [])
+        cfg_backends.append({"id": new_backend.id, "host": new_backend.host, "port": new_backend.port, "weight": new_backend.weight})
+
+        logger.info(f"[CONTROL] Added new backend {new_backend.id} ({new_backend.url}) with weight {new_backend.weight}")
+        return web.json_response({
+            "status": "ok",
+            "message": f"Backend {b_id} added successfully",
+            "backend": new_backend.to_dict(),
+        })
+
+    elif action == "weight":
+        b_id = data.get("id")
+        weight = data.get("weight")
+        if not b_id or weight is None:
+            return web.json_response({"error": "Missing required fields: 'id' and 'weight'"}, status=400)
+
+        try:
+            w_int = int(weight)
+            if w_int <= 0:
+                return web.json_response({"error": "Weight must be a positive integer (> 0)"}, status=400)
+        except (ValueError, TypeError):
+            return web.json_response({"error": "Weight must be an integer"}, status=400)
+
+        success = balancer.update_backend_weight(str(b_id), w_int)
+        if not success:
+            return web.json_response({"error": f"Backend with id '{b_id}' not found"}, status=404)
+
+        # Cập nhật weight trong app[CONFIG_KEY]
+        for b in request.app[CONFIG_KEY].get("backends", []):
+            if b.get("id") == b_id:
+                b["weight"] = w_int
+
+        logger.info(f"[CONTROL] Updated backend {b_id} weight to {w_int}")
+        return web.json_response({
+            "status": "ok",
+            "message": f"Updated weight of {b_id} to {w_int}",
+            "id": str(b_id),
+            "weight": w_int,
+        })
+
+    return web.json_response({"error": f"Unknown action '{action}'. Available: 'add', 'weight'"}, status=400)
+
+
 def create_app(
     config: Optional[dict] = None,
     balancer: Optional[BaseBalancer] = None,
@@ -285,6 +357,7 @@ def create_app(
 
     # Đăng ký Control API trước catch-all route
     app.router.add_post("/api/algorithm", handle_change_algorithm)
+    app.router.add_post("/api/backend", handle_manage_backend)
 
     # Đăng ký bắt toàn bộ mọi HTTP methods và URL paths
     app.router.add_route("*", "/{path:.*}", handle_request)

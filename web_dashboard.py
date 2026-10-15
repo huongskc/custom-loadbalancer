@@ -223,16 +223,22 @@ class StatsAggregator:
         nodes_info = {}
         target_ports = ports or load_backend_ports()
         for idx, port in enumerate(target_ports, 1):
-            node_id = f"mock-node-{idx}"
+            fallback_id = f"mock-node-{idx}"
             start_t = time.perf_counter()
             try:
                 async with session.get(f"http://127.0.0.1:{port}/healthz", timeout=aiohttp.ClientTimeout(total=0.5)) as resp:
                     lat = round((time.perf_counter() - start_t) * 1000, 2)
+                    data = {}
+                    try:
+                        data = await resp.json()
+                    except Exception:
+                        pass
+                    node_id = data.get("node") or fallback_id
                     nodes_info[node_id] = {
                         "port": port, "alive": resp.status == 200, "status_code": resp.status, "latency_ms": lat
                     }
             except Exception:
-                nodes_info[node_id] = {"port": port, "alive": False, "status_code": 0, "latency_ms": 0.0}
+                nodes_info[fallback_id] = {"port": port, "alive": False, "status_code": 0, "latency_ms": 0.0}
         return nodes_info
 
     @classmethod
@@ -340,6 +346,51 @@ async def handle_control_chaos(request: web.Request) -> web.Response:
     return await _forward_post(request.app[SESSION_KEY], url)
 
 
+async def handle_control_backend(request: web.Request) -> web.Response:
+    pm: ProcessManager = request.app[PM_KEY]
+    session: aiohttp.ClientSession = request.app[SESSION_KEY]
+    data = await _parse_json(request)
+    action = data.get("action", "add")
+
+    if action == "add":
+        b_id = data.get("id")
+        port = data.get("port")
+        if not b_id or not port:
+            return web.json_response({"error": "Missing required fields: 'id' and 'port'"}, status=400)
+        try:
+            port = int(port)
+        except (ValueError, TypeError):
+            return web.json_response({"error": "'port' must be an integer"}, status=400)
+
+        # 1. Nếu cụm Mock Server đang chạy, yêu cầu cụm spawn thêm server con mới
+        services = pm.get_process_status()
+        if services["mock_servers"]["status"] == "running":
+            spawn_port = pm.mock_ports[0] if pm.mock_ports else 9001
+            spawn_url = f"http://127.0.0.1:{spawn_port}/chaos/spawn"
+            try:
+                async with session.post(spawn_url, json={"name": b_id, "port": port}, timeout=aiohttp.ClientTimeout(total=2.0)) as resp:
+                    if resp.status not in (200, 201):
+                        return web.json_response({"error": f"Failed to spawn mock node: HTTP {resp.status}"}, status=502)
+            except Exception as e:
+                return web.json_response({"error": f"Failed to communicate with mock cluster: {e}"}, status=502)
+
+        # 2. Chuyển tiếp lệnh sang Proxy (:8000) để thêm vào thuật toán cân bằng tải
+        res = await _forward_post(session, "http://127.0.0.1:8000/api/backend", data)
+        if res.status == 200:
+            if port not in pm.mock_ports:
+                pm.mock_ports.append(port)
+        return res
+
+    elif action == "weight":
+        b_id = data.get("id")
+        weight = data.get("weight")
+        if not b_id or weight is None:
+            return web.json_response({"error": "Missing required fields: 'id' and 'weight'"}, status=400)
+        return await _forward_post(session, "http://127.0.0.1:8000/api/backend", data)
+
+    return web.json_response({"error": f"Unknown action: '{action}'. Available: 'add', 'weight'"}, status=400)
+
+
 async def handle_static_fallback(request: web.Request) -> web.Response:
     """Phục vụ file web/ hoặc trả về landing page HTML đơn giản."""
     path = request.match_info.get("path", "")
@@ -380,6 +431,7 @@ def create_dashboard_app(
     app.router.add_post("/api/control/traffic", handle_control_traffic)
     app.router.add_post("/api/control/algorithm", handle_control_algorithm)
     app.router.add_post("/api/control/chaos", handle_control_chaos)
+    app.router.add_post("/api/control/backend", handle_control_backend)
     app.router.add_route("*", "/{path:.*}", handle_static_fallback)
     return app
 

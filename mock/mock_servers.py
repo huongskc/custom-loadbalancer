@@ -8,6 +8,7 @@ import asyncio
 import logging
 from pathlib import Path
 import sys
+from typing import Dict, List
 from aiohttp import web
 
 project_root = str(Path(__file__).resolve().parent.parent)
@@ -18,6 +19,9 @@ from balancers.base import extract_client_ip
 
 # Cấu hình log hệ thống
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+NODES: Dict[int, "MockNode"] = {}
+RUNNERS: List[web.AppRunner] = []
 
 
 class MockNode:
@@ -36,6 +40,7 @@ class MockNode:
         self.app.router.add_post("/chaos/down", self.chaos_down)
         self.app.router.add_post("/chaos/up", self.chaos_up)
         self.app.router.add_post("/chaos/delay", self.chaos_delay)
+        self.app.router.add_post("/chaos/spawn", self.chaos_spawn)
         self.app.router.add_route("*", "/{tail:.*}", self.handle_request)
 
     @property
@@ -70,6 +75,29 @@ class MockNode:
         self.delay_ms = float(request.query.get("ms", 0))
         logging.info(f"[{self.name}] Node delay set to {self.delay_ms}ms")
         return web.json_response({"action": "chaos_delay", "node": self.name, "delay_ms": self.delay_ms})
+
+    async def chaos_spawn(self, request: web.Request) -> web.Response:
+        """Khởi chạy động thêm một MockNode mới trên cổng được chỉ định."""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        port = data.get("port")
+        if not port:
+            return web.json_response({"error": "Missing 'port' parameter"}, status=400)
+        port = int(port)
+        name = data.get("name") or f"mock-node-{port - 9000 if port > 9000 else port}"
+
+        if port in NODES:
+            return web.json_response({"status": "already_running", "port": port, "name": NODES[port].name})
+
+        new_node = MockNode(name, port)
+        NODES[port] = new_node
+        runner = await new_node.start()
+        RUNNERS.append(runner)
+        logging.info(f"[{self.name}] Dynamically spawned new node: {name} on port {port}")
+        return web.json_response({"status": "ok", "message": f"Node {name} spawned on port {port}", "port": port, "name": name})
 
     async def handle_request(self, request: web.Request) -> web.Response:
         """Xử lý mọi HTTP request thông thường chuyển tiếp từ Load Balancer."""
@@ -109,18 +137,22 @@ class MockNode:
 
 
 async def main():
-    # Khởi tạo cụm 3 node(cổng 9001, 9002, 9003)
-    nodes = [MockNode(f"mock-node-{i}", port) for i, port in enumerate([9001, 9002, 9003], 1)]
+    # Khởi tạo cụm ban đầu (cổng 9001, 9002, 9003)
+    initial_ports = [9001, 9002, 9003]
+    for i, port in enumerate(initial_ports, 1):
+        node = MockNode(f"mock-node-{i}", port)
+        NODES[port] = node
 
-    # Chạy đồng thời cả 3 server trong cùng 1 Event Loop
-    runners = await asyncio.gather(*(node.start() for node in nodes))
+    # Chạy đồng thời các server trong cùng 1 Event Loop
+    started = await asyncio.gather(*(node.start() for node in NODES.values()))
+    RUNNERS.extend(started)
 
     try:
         # Giữ tiến trình chạy liên tục cho đến khi nhận tín hiệu dừng
         await asyncio.Event().wait()
     finally:
-        # Dọn dẹp tài nguyên khi dừng cụm
-        await asyncio.gather(*(r.cleanup() for r in runners))
+        # Dọn dẹp toàn bộ tài nguyên (bao gồm cả các node sinh động)
+        await asyncio.gather(*(r.cleanup() for r in list(RUNNERS)))
 
 
 if __name__ == "__main__":

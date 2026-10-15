@@ -157,3 +157,31 @@ Tài liệu tóm tắt các REST API tại cổng `:8001` (`web_dashboard.py`) p
   # Thêm 500ms trễ vào node 9003
   Invoke-RestMethod -Uri "http://127.0.0.1:8001/api/control/chaos" -Method Post -ContentType "application/json" -Body '{"port":9003,"action":"delay","ms":500}'
   ```
+
+---
+
+## 7. Quản Lý Backend Nodes & Trọng Số Động (Dynamic Nodes & Weights)
+
+- **Endpoint:** `POST /api/control/backend`
+- **Chức năng:**
+  - Thêm node mới vào cụm cân bằng tải tại runtime (tự động bật HTTP Mock Server con nếu chưa có).
+  - Cập nhật trọng số (`weight`) động cho bất kỳ node nào (Consistent Hash tự tính lại Virtual Nodes, Least Connections tự cập nhật score).
+- **Tham số body:**
+  - **Thêm node:** `{"action": "add", "id": "mock-node-4", "port": 9004, "weight": 2, "host": "127.0.0.1"}` (`id` và `port` bắt buộc; `weight` mặc định 1, `host` mặc định `127.0.0.1`)
+  - **Đổi trọng số:** `{"action": "weight", "id": "mock-node-1", "weight": 10}` (`id` và `weight` bắt buộc)
+- **Lệnh curl:**
+  ```bash
+  # Thêm mock-node-4 trên cổng 9004 với trọng số 2
+  curl -s -X POST http://127.0.0.1:8001/api/control/backend -H "Content-Type: application/json" -d '{"action": "add", "id": "mock-node-4", "port": 9004, "weight": 2}'
+
+  # Cập nhật trọng số của mock-node-1 lên 10
+  curl -s -X POST http://127.0.0.1:8001/api/control/backend -H "Content-Type: application/json" -d '{"action": "weight", "id": "mock-node-1", "weight": 10}'
+  ```
+- **Lệnh PowerShell:**
+  ```powershell
+  # Thêm mock-node-4 trên cổng 9004 với trọng số 2
+  Invoke-RestMethod -Uri "http://127.0.0.1:8001/api/control/backend" -Method Post -ContentType "application/json" -Body '{"action":"add","id":"mock-node-4","port":9004,"weight":2}'
+
+  # Cập nhật trọng số của mock-node-1 lên 10
+  Invoke-RestMethod -Uri "http://127.0.0.1:8001/api/control/backend" -Method Post -ContentType "application/json" -Body '{"action":"weight","id":"mock-node-1","weight":10}'
+  ```
