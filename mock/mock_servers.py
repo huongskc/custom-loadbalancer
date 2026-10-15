@@ -6,7 +6,15 @@ Hỗ trợ kiểm tra sức khỏe (/healthz) và giả lập sự cố (/chaos/
 
 import asyncio
 import logging
+from pathlib import Path
+import sys
 from aiohttp import web
+
+project_root = str(Path(__file__).resolve().parent.parent)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from balancers.base import extract_client_ip
 
 # Cấu hình log hệ thống
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -76,7 +84,7 @@ class MockNode:
         self.requests += 1
 
         # Trích xuất Client IP (ưu tiên header X-Forwarded-For do Load Balancer chuyển tiếp)
-        client_ip = request.headers.get("X-Forwarded-For", request.remote or "127.0.0.1").split(",")[0].strip()
+        client_ip = extract_client_ip(dict(request.headers), request.remote)
 
         return web.json_response(
             {

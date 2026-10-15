@@ -7,7 +7,7 @@ Tìm kiếm nhị phân O(log(N * V)) sử dụng bisect.
 import bisect
 import hashlib
 from typing import Dict, List, Optional
-from .base import Backend, BaseBalancer
+from .base import Backend, BaseBalancer, extract_client_ip
 
 
 class ConsistentHashBalancer(BaseBalancer):
@@ -54,8 +54,8 @@ class ConsistentHashBalancer(BaseBalancer):
         if not self._sorted_keys:
             return None
 
-        # Bóc tách IP đầu tiên nếu client_ip là chuỗi danh sách proxy từ X-Forwarded-For
-        clean_ip = client_ip.split(",")[0].strip() if client_ip else "127.0.0.1"
+        # Chuẩn hóa client_ip bằng hàm dùng chung
+        clean_ip = extract_client_ip(remote=client_ip)
         h = self._hash(clean_ip)
 
         # Tìm kiếm nhị phân vị trí khóa trên vòng tròn: phần tử đầu tiên có hash >= h
@@ -73,7 +73,7 @@ class ConsistentHashBalancer(BaseBalancer):
         """
         if not client_ip or not self._sorted_keys:
             return ""
-        clean_ip = client_ip.split(",")[0].strip()
+        clean_ip = extract_client_ip(remote=client_ip)
         ip_h = self._hash(clean_ip)
 
         idx = bisect.bisect_left(self._sorted_keys, ip_h)

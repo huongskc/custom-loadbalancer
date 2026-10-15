@@ -13,7 +13,7 @@ import aiohttp
 from aiohttp import web
 import yaml
 
-from balancers.base import Backend, BaseBalancer
+from balancers.base import Backend, BaseBalancer, extract_client_ip
 from balancers.consistent_hash import ConsistentHashBalancer
 from balancers.least_connections import LeastConnectionsBalancer
 from balancers.round_robin import RoundRobinBalancer
@@ -115,8 +115,7 @@ async def handle_request(request: web.Request) -> web.Response:
     session: aiohttp.ClientSession = request.app[SESSION_KEY]
 
     # 2. Xác định Client IP (ưu tiên IP gốc từ X-Forwarded-For nếu đứng sau Cloudflare/Nginx)
-    raw_ip = request.headers.get("X-Forwarded-For") or (request.remote or "127.0.0.1")
-    client_ip = raw_ip.split(",")[0].strip()
+    client_ip = extract_client_ip(dict(request.headers), request.remote)
 
     # 3. Đọc dữ liệu Payload từ Client
     body = await request.read()

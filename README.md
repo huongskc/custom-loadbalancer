@@ -10,18 +10,37 @@ pip install -r requirements.txt
 
 ---
 
-## 2. Khởi chạy Cụm Mock Servers (3 Nodes)
+## 2. Trung Tâm Điều Khiển Hợp Nhất (Web Dashboard - Single Entry Point)
 
-Khởi động đồng thời 3 máy chủ HTTP backend độc lập tại các cổng `9001`, `9002`, `9003` trong cùng 1 lệnh:
+**Khuyến nghị:** Bạn chỉ cần mở duy nhất 1 terminal và chạy lệnh:
+
+```bash
+python web_dashboard.py
+```
+
+Truy cập trình duyệt tại **`http://localhost:8001`**. Giao diện điều phối cho phép:
+- Khởi động / Dừng cụm 3 Mock Servers (`:9001`, `:9002`, `:9003`).
+- Khởi động / Dừng Reverse Proxy (`:8000`).
+- Bật / Tắt bộ sinh tải với tần suất và luồng tùy chỉnh.
+- Chuyển đổi thuật toán Clean Slate trực tiếp trên UI.
+- Tiêm sự cố sập node hoặc giả lập độ trễ (Chaos Testing) chỉ bằng 1 cú click.
+
+> 📖 **Tài liệu API Web Dashboard:** Xem chi tiết tại [docs/api.md](docs/api.md).
+
+---
+
+## 3. Khởi chạy Thủ công Từng Thành phần (Manual CLI Execution)
+
+Nếu muốn khởi chạy thủ công từng dịch vụ trên các terminal riêng biệt:
+
+### A. Khởi chạy Cụm Mock Servers (3 Nodes)
+Khởi động đồng thời 3 máy chủ HTTP backend độc lập tại các cổng `9001`, `9002`, `9003`:
 
 ```bash
 python mock/mock_servers.py
 ```
 
----
-
-## 3. Khởi chạy Layer 7 Reverse Proxy Server
-
+### B. Khởi chạy Layer 7 Reverse Proxy Server
 Khởi động bộ cân bằng tải tại cổng `:8000`:
 
 ```bash
@@ -76,7 +95,7 @@ python scripts/algo.py round_robin
 ## 5. Chạy Kiểm thử Tự động (Automated Tests)
 
 ### A. Kiểm thử Toàn diện Hệ thống
-Chạy toàn bộ 42 test cases tự động (Base contract, Consistent Hashing, Round Robin, Least Connections, Reverse Proxy & Control API, Failover, Traffic Simulation, Chaos CLI, Dynamic Recovery):
+Chạy toàn bộ 51 test cases tự động (Base contract, Consistent Hashing, Round Robin, Least Connections, Reverse Proxy & Control API, Failover, Traffic Simulation, Web Dashboard Coordinator & Force Kill):
 
 ```bash
 python -m pytest tests/ -v
@@ -90,6 +109,7 @@ python tests/test_round_robin.py
 python tests/test_least_connections.py
 python tests/test_proxy.py
 python tests/test_traffic_sim.py
+python tests/test_web_dashboard.py
 ```
 
 ### B. Kiểm thử Cụm Mock Server Cục bộ

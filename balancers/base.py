@@ -6,7 +6,23 @@ Cung cấp cấu trúc dữ liệu Backend và lớp trừu tượng BaseBalance
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Mapping, Optional
+
+
+def extract_client_ip(headers: Optional[Mapping[str, str]] = None, remote: Optional[str] = None) -> str:
+    """
+    Trích xuất Client IP chuẩn hóa:
+    - Ưu tiên IP đầu tiên trong header X-Forwarded-For.
+    - Dự phòng sang remote address.
+    - Mặc định là '127.0.0.1' nếu cả hai đều rỗng.
+    """
+    if headers:
+        xff = headers.get("X-Forwarded-For") or headers.get("x-forwarded-for")
+        if xff:
+            return str(xff).split(",")[0].strip()
+    if remote:
+        return str(remote).split(",")[0].strip()
+    return "127.0.0.1"
 
 
 @dataclass
