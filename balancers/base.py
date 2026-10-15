@@ -6,7 +6,23 @@ Cung cấp cấu trúc dữ liệu Backend và lớp trừu tượng BaseBalance
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Mapping, Optional
+
+
+def extract_client_ip(headers: Optional[Mapping[str, str]] = None, remote: Optional[str] = None) -> str:
+    """
+    Trích xuất Client IP chuẩn hóa:
+    - Ưu tiên IP đầu tiên trong header X-Forwarded-For.
+    - Dự phòng sang remote address.
+    - Mặc định là '127.0.0.1' nếu cả hai đều rỗng.
+    """
+    if headers:
+        xff = headers.get("X-Forwarded-For") or headers.get("x-forwarded-for")
+        if xff:
+            return str(xff).split(",")[0].strip()
+    if remote:
+        return str(remote).split(",")[0].strip()
+    return "127.0.0.1"
 
 
 @dataclass
@@ -75,6 +91,37 @@ class BaseBalancer(ABC):
     def on_backends_updated(self):
         """Hook được kích hoạt khi trạng thái backend thay đổi (dành cho Consistent Hash rebuild ring)."""
         pass
+
+    def add_backend(self, backend: Backend) -> bool:
+        """
+        Thêm một backend mới vào cụm cân bằng tải tại runtime.
+        Trả về False nếu ID hoặc cặp host:port đã tồn tại.
+        """
+        for b in self.backends:
+            if b.id == backend.id or (b.host == backend.host and b.port == backend.port):
+                return False
+        self.backends.append(backend)
+        self.on_backends_updated()
+        return True
+
+    def update_backend_weight(self, backend_id: str, weight: int) -> bool:
+        """
+        Cập nhật trọng số của backend và kích hoạt hook cập nhật thuật toán.
+        Trả về True nếu cập nhật thành công, False nếu không tìm thấy backend.
+        """
+        for b in self.backends:
+            if b.id == backend_id:
+                b.weight = max(1, int(weight))
+                self.on_backends_updated()
+                return True
+        return False
+
+    def get_backend_by_id(self, backend_id: str) -> Optional[Backend]:
+        """Tìm backend theo ID."""
+        for b in self.backends:
+            if b.id == backend_id:
+                return b
+        return None
 
     @abstractmethod
     def get_backend(self, client_ip: str = "") -> Optional[Backend]:
