@@ -316,7 +316,30 @@ async def handle_manage_backend(request: web.Request) -> web.Response:
             "weight": w_int,
         })
 
-    return web.json_response({"error": f"Unknown action '{action}'. Available: 'add', 'weight'"}, status=400)
+    elif action == "reset":
+        raw_config = load_config()
+        default_backends = [
+            Backend(id=b["id"], host=b["host"], port=b["port"], weight=b.get("weight", 1))
+            for b in raw_config.get("backends", [])
+        ]
+        algo_name = balancer.name
+        new_balancer = ALGORITHMS[algo_name](default_backends)
+        if hasattr(request.app, "_state"):
+            request.app._state[BALANCER_KEY] = new_balancer
+        else:
+            request.app[BALANCER_KEY] = new_balancer
+        request.app[CONFIG_KEY]["backends"] = [
+            {"id": b.id, "host": b.host, "port": b.port, "weight": b.weight}
+            for b in default_backends
+        ]
+        logger.info(f"[CONTROL] Reset backends to defaults: {[b.id for b in default_backends]}")
+        return web.json_response({
+            "status": "ok",
+            "message": "Backends reset to default config",
+            "backends": [b.to_dict() for b in default_backends],
+        })
+
+    return web.json_response({"error": f"Unknown action '{action}'. Available: 'add', 'weight', 'reset'"}, status=400)
 
 
 def create_app(
