@@ -61,7 +61,12 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .bar i{display:block;height:100%;background:var(--accent);width:0}
 .dead .bar i{background:var(--bad)}
 .meta{display:flex;justify-content:space-between;font-size:13px;color:var(--muted)}
-.tablewrap{overflow-x:auto}
+#flow{width:100%;height:auto;display:block}
+#flow text{fill:var(--ink);font:12px var(--mono)}
+#flow .hd{fill:var(--muted);font:600 11px var(--sans)}
+.strip-label{font-size:12px;color:var(--muted);margin:10px 0 4px}
+.strip{display:flex;gap:4px;flex-wrap:wrap}
+.strip i{width:22px;height:22px;border-radius:3px;display:block}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th{text-align:left;font-weight:600;color:var(--muted);padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
 td{padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
@@ -151,13 +156,10 @@ td.mono,.mono{font-family:var(--mono);font-size:12px}
     </section>
 
     <section>
-      <h2>20 request gần nhất</h2>
-      <div class="tablewrap">
-        <table>
-          <thead><tr><th>Giờ</th><th>Client</th><th>Đường dẫn</th><th>Node</th><th>Mã</th><th>Quyết định</th></tr></thead>
-          <tbody id="events"></tbody>
-        </table>
-      </div>
+      <h2>Luồng 20 request gần nhất: client → node</h2>
+      <svg id="flow" viewBox="0 0 640 100" role="img" aria-label="Sơ đồ luồng request từ client tới node" hidden></svg>
+      <div class="strip-label" id="strip-label" hidden>Dòng thời gian (mới nhất bên trái)</div>
+      <div class="strip" id="strip"></div>
       <div class="empty" id="events-empty">Chưa có request nào. Bật mock, proxy rồi bắt đầu sinh tải.</div>
     </section>
   </div>
@@ -248,13 +250,60 @@ function render(s) {
     </div>`;
   }).join("") || `<div class="empty">Chưa có node nào. Khởi động mock servers.</div>`;
 
-  const ev = s.recent_events || [];
+  renderFlow(s.recent_events || []);
+}
+
+const PAL = ["#0e9f8a", "#d98a1c", "#7a5ad6", "#d1507a", "#3b82c4", "#6a9a2a"];
+function nodeColor(id) {
+  if (id === "None") return "var(--bad)";
+  const i = Object.keys(nodesCache).indexOf(id);
+  return PAL[(i < 0 ? 5 : i) % PAL.length];
+}
+
+function renderFlow(ev) {
+  const svg = $("#flow"), strip = $("#strip");
   $("#events-empty").style.display = ev.length ? "none" : "block";
-  $("#events").innerHTML = ev.map(e => {
-    const ok = e.status >= 200 && e.status < 400;
-    return `<tr><td>${new Date(e.ts * 1000).toLocaleTimeString("vi-VN")}</td><td class="mono">${esc(e.client_ip)}</td>
-      <td class="mono">${esc(e.path)}</td><td>${esc(e.node)}</td>
-      <td class="${ok ? "s-ok" : "s-bad"}">${e.status}</td><td class="mono">${esc(fmtDecision(e.decision))}</td></tr>`;
+  svg.hidden = $("#strip-label").hidden = !ev.length;
+  if (!ev.length) { strip.innerHTML = ""; return; }
+
+  const list = [...ev].reverse();                       // cũ -> mới
+  const clients = [...new Set(list.map(e => e.client_ip))];
+  const nodes = [...new Set([...Object.keys(nodesCache), ...list.map(e => e.node)])];
+  const rowH = 30, H = Math.max(clients.length, nodes.length) * rowH + 40;
+  const y = (i, n) => H / 2 + 8 + (i - (n - 1) / 2) * rowH;
+  const X1 = 150, X2 = 490;
+
+  const edges = {};
+  list.forEach(e => {
+    const k = e.client_ip + "|" + e.node;
+    const g = edges[k] || (edges[k] = {c: e.client_ip, n: e.node, count: 0, bad: false});
+    g.count++; g.bad = e.status >= 400; g.last = e;
+  });
+  const newest = list[list.length - 1].client_ip + "|" + list[list.length - 1].node;
+
+  let out = `<text class="hd" x="150" y="14" text-anchor="end">CLIENT</text><text class="hd" x="492" y="14">NODE</text>`;
+  for (const [k, g] of Object.entries(edges)) {
+    const y1 = y(clients.indexOf(g.c), clients.length), y2 = y(nodes.indexOf(g.n), nodes.length);
+    const col = g.bad ? "var(--bad)" : nodeColor(g.n);
+    out += `<path d="M${X1 + 8} ${y1} C 320 ${y1}, 320 ${y2}, ${X2 - 8} ${y2}" fill="none" stroke="${col}"
+      stroke-width="${Math.min(1.5 + g.count * 1.5, 9)}" stroke-linecap="round" opacity="${k === newest ? 1 : 0.5}">
+      <title>${esc(g.c)} → ${esc(g.n)}: ${g.count} request${g.last.decision ? "\n" + esc(fmtDecision(g.last.decision)) : ""}</title></path>`;
+  }
+  clients.forEach((c, i) => {
+    out += `<text x="150" y="${y(i, clients.length) + 4}" text-anchor="end">${esc(c)}</text>
+      <circle cx="158" cy="${y(i, clients.length)}" r="5" fill="var(--muted)"/>`;
+  });
+  nodes.forEach((n, i) => {
+    const cnt = list.filter(e => e.node === n).length;
+    out += `<circle cx="${X2 - 2}" cy="${y(i, nodes.length)}" r="7" fill="${nodeColor(n)}"/>
+      <text x="${X2 + 12}" y="${y(i, nodes.length) + 4}" ${cnt ? "" : 'opacity=".45"'}>${esc(n)} (${cnt})</text>`;
+  });
+  svg.setAttribute("viewBox", `0 0 640 ${H}`);
+  svg.innerHTML = out;
+
+  strip.innerHTML = ev.map(e => {
+    const bad = e.status >= 400;
+    return `<i style="background:${bad ? "var(--bad)" : nodeColor(e.node)}" title="${esc(e.client_ip)} → ${esc(e.node)} (HTTP ${e.status}) ${new Date(e.ts * 1000).toLocaleTimeString("vi-VN")}"></i>`;
   }).join("");
 }
 
