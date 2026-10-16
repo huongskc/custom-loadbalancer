@@ -18,12 +18,30 @@ pip install -r requirements.txt
 python web_dashboard.py
 ```
 
-Truy cập trình duyệt tại **`http://localhost:8001`**. Giao diện điều phối cho phép:
+Truy cập trình duyệt tại **`http://localhost:8001`**. Giao diện (`web/index.html`) được `web_dashboard.py` phục vụ trực tiếp, không cần cài thêm gì và không cần build.
+
+### Hướng dẫn mở và sử dụng giao diện
+
+1. **Mở giao diện:** chạy `python web_dashboard.py`, rồi mở `http://localhost:8001` trên trình duyệt. Nếu cổng 8001 đang bận, dùng `python web_dashboard.py --port 8002`.
+2. **Khởi động hệ thống:** ở khung **Dịch vụ**, bấm **Khởi động** cho Mock servers, sau đó cho Reverse proxy. Ba thẻ node trong khung **Backend nodes** sẽ chuyển sang `UP`.
+3. **Sinh tải:** ở khung **Sinh tải**, chọn số luồng và giãn cách, bấm **Bắt đầu**. Bảng **20 request gần nhất** và các chỉ số (RPS, tỷ lệ thành công, phần trăm tải mỗi node) cập nhật mỗi giây.
+4. **Đổi thuật toán:** bấm `Round Robin`, `Least Conn` hoặc `Consistent Hash` ở khung **Thuật toán cân bằng tải**. Lệnh này gửi qua proxy nên cần bật proxy trước.
+5. **Tiêm sự cố:** ở khung **Tiêm sự cố**, chọn node rồi bấm **Đánh sập**, **Khôi phục** hoặc nhập độ trễ (ms) và bấm **Áp dụng**. Quan sát cơ chế failover: node chuyển `DOWN` nhưng request vẫn trả 200.
+6. **Quản lý backend:** ở khung **Quản lý backend**, nhập ID và cổng để **Thêm node** mới khi hệ thống đang chạy, hoặc chọn node và **Lưu** trọng số mới.
+7. **Dừng:** bấm **Dừng** ở từng dịch vụ. Khi tắt `web_dashboard.py` (Ctrl+C), các tiến trình con do nó khởi động cũng bị dừng theo.
+
+Giao diện cho phép:
 - Khởi động / Dừng cụm 3 Mock Servers (`:9001`, `:9002`, `:9003`).
 - Khởi động / Dừng Reverse Proxy (`:8000`).
 - Bật / Tắt bộ sinh tải với tần suất và luồng tùy chỉnh.
 - Chuyển đổi thuật toán Clean Slate trực tiếp trên UI.
 - Tiêm sự cố sập node hoặc giả lập độ trễ (Chaos Testing) chỉ bằng 1 cú click.
+- Thêm node mới và chỉnh trọng số động tại runtime.
+
+> **Xử lý sự cố thường gặp**
+> - Trang báo "Mất kết nối tới web_dashboard": `web_dashboard.py` chưa chạy hoặc sai cổng.
+> - Đổi thuật toán, thêm node hoặc đổi trọng số báo lỗi 502: Reverse proxy chưa được khởi động.
+> - Trang trắng hoặc hiện "API Ready on Port 8001": thiếu file `web/index.html`, kiểm tra thư mục `web/` nằm ở gốc dự án.
 
 > 📖 **Tài liệu API Web Dashboard:** Xem chi tiết tại [docs/api.md](docs/api.md).
 
@@ -95,7 +113,7 @@ python scripts/algo.py round_robin
 ## 5. Chạy Kiểm thử Tự động (Automated Tests)
 
 ### A. Kiểm thử Toàn diện Hệ thống
-Chạy toàn bộ 51 test cases tự động (Base contract, Consistent Hashing, Round Robin, Least Connections, Reverse Proxy & Control API, Failover, Traffic Simulation, Web Dashboard Coordinator & Force Kill):
+Chạy toàn bộ 57 test cases tự động (Base contract, Consistent Hashing, Round Robin, Least Connections, Reverse Proxy & Control API, Failover, Traffic Simulation, Web Dashboard Coordinator & Force Kill):
 
 ```bash
 python -m pytest tests/ -v
@@ -105,7 +123,7 @@ Hoặc chạy trực tiếp từng module test:
 ```bash
 python tests/test_base.py
 python tests/test_consistent_hash.py
-python tests/test_round_robin.py
+python tests/test_round_robin.py #chú ý @pytest.mark.anyio
 python tests/test_least_connections.py
 python tests/test_proxy.py
 python tests/test_traffic_sim.py
