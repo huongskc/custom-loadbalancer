@@ -46,6 +46,16 @@ def load_backend_ports(config_path: Path = CONFIG_PATH) -> List[int]:
         return default_ports
 
 
+def load_backend_weights(config_path: Path = CONFIG_PATH) -> Dict[str, int]:
+    """Đọc trọng số ban đầu {id: weight} từ config.yaml (rỗng nếu không đọc được)."""
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        return {b["id"]: int(b.get("weight", 1)) for b in cfg.get("backends", []) if "id" in b}
+    except Exception:
+        return {}
+
+
 def is_port_open(port: int, host: str = "127.0.0.1", timeout: float = 0.2) -> bool:
     """Kiểm tra socket TCP non-blocking xem cổng đang mở hay đóng."""
     try:
@@ -63,6 +73,7 @@ class ProcessManager:
         self.project_root = project_root
         self.default_ports = load_backend_ports(project_root / "config.yaml")
         self.mock_ports = mock_ports or list(self.default_ports)
+        self.weights: Dict[str, int] = load_backend_weights(project_root / "config.yaml")
         self.mock_proc: Optional[subprocess.Popen] = None
         self.proxy_proc: Optional[subprocess.Popen] = None
         self.traffic_proc: Optional[subprocess.Popen] = None
@@ -71,6 +82,7 @@ class ProcessManager:
     def reset_mock_ports(self):
         """Khôi phục danh sách mock_ports về mặc định từ config.yaml."""
         self.mock_ports = list(self.default_ports)
+        self.weights = load_backend_weights(self.project_root / "config.yaml")
         logger.info(f"[PROCESS] Reset mock_ports to defaults: {self.mock_ports}")
 
     async def _start_service(self, name: str, script_rel: str, ports: List[int]) -> Dict[str, Any]:
@@ -272,6 +284,9 @@ class StatsAggregator:
                 for idx, p in enumerate(default_ports, 1)
             }
 
+        for node_id, info in services["mock_servers"]["nodes"].items():
+            info["weight"] = getattr(pm, "weights", {}).get(node_id)
+
         detected_algo = "consistent_hash"
         for r in reversed(events):
             if r.get("algo") and r["algo"] != "unknown":
@@ -315,6 +330,13 @@ async def _forward_post(session: aiohttp.ClientSession, url: str, data: Optional
     except Exception as e:
         err_msg = str(e) if str(e) else f"{type(e).__name__} (service may not be running or reachable)"
         return web.json_response({"error": f"Failed to forward to {url}: {err_msg}"}, status=502)
+
+
+def _to_weight(value: Any, default: int = 1) -> int:
+    try:
+        return max(1, int(value))
+    except (ValueError, TypeError):
+        return default
 
 
 async def handle_get_stats(request: web.Request) -> web.Response:
@@ -418,6 +440,7 @@ async def handle_control_backend(request: web.Request) -> web.Response:
         if res.status == 200:
             if port not in pm.mock_ports:
                 pm.mock_ports.append(port)
+            pm.weights[b_id] = _to_weight(data.get("weight"), 1)
         return res
 
     elif action == "weight":
@@ -425,7 +448,10 @@ async def handle_control_backend(request: web.Request) -> web.Response:
         weight = data.get("weight")
         if not b_id or weight is None:
             return web.json_response({"error": "Missing required fields: 'id' and 'weight'"}, status=400)
-        return await _forward_post(session, "http://127.0.0.1:8000/api/backend", data)
+        res = await _forward_post(session, "http://127.0.0.1:8000/api/backend", data)
+        if res.status == 200:
+            pm.weights[b_id] = _to_weight(weight, 1)
+        return res
 
     elif action == "reset":
         pm.reset_mock_ports()

@@ -55,6 +55,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 .node.dead{border-left-color:var(--bad)}
 .node h3{margin:0;font-size:15px;display:flex;justify-content:space-between;gap:8px}
 .node small{color:var(--muted)}
+.w{font:600 12px var(--mono);padding:1px 6px;margin-left:4px;border:1px solid var(--line);border-radius:3px;color:var(--muted)}
 .state{font-size:12px;font-weight:600;color:var(--ok)}
 .dead .state{color:var(--bad)}
 .bar{height:8px;background:var(--bar);border-radius:4px;margin:10px 0 4px;overflow:hidden}
@@ -243,7 +244,7 @@ function render(s) {
   $("#nodes").innerHTML = Object.entries(nodes).map(([id, n]) => {
     const pct = (dist[id] && dist[id].pct) || 0, cnt = (dist[id] && dist[id].count) || 0;
     return `<div class="node ${n.alive ? "" : "dead"}">
-      <h3>${esc(id)} <span class="state">${n.alive ? "UP" : "DOWN"}</span></h3>
+      <h3><span>${esc(id)} <span class="w" title="Trọng số (weight)">w=${n.weight ?? "-"}</span></span> <span class="state">${n.alive ? "UP" : "DOWN"}</span></h3>
       <small>cổng ${n.port}</small>
       <div class="bar"><i style="width:${pct}%"></i></div>
       <div class="meta"><span>${pct}% tải (${cnt})</span><span>${n.alive ? n.latency_ms + " ms" : "HTTP " + n.status_code}</span></div>
