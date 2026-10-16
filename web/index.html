@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Load Balancer Control</title>
+<style>
+:root{
+  --bg:#e9edf1; --panel:#f8fafb; --ink:#16202a; --muted:#5d6b78; --line:#cfd7de;
+  --accent:#0e7a6b; --accent-ink:#fff; --warn:#a96a00; --bad:#b83a2e; --ok:#0e7a6b;
+  --bar:#d5dde4; --mono:Consolas,"Cascadia Mono",monospace;
+  --sans:Bahnschrift,"Segoe UI",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#10161c; --panel:#18212a; --ink:#e4ebf0; --muted:#8c9bab; --line:#2b3844;
+    --accent:#3fc5b0; --accent-ink:#06201b; --warn:#e0a63a; --bad:#ee7a6d; --ok:#3fc5b0; --bar:#26323d;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans)}
+header{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid var(--line);background:var(--panel)}
+h1{margin:0;font-size:20px;font-weight:600}
+h2{margin:0 0 12px;font-size:15px;font-weight:600}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border:1px solid var(--line);border-radius:999px;font-size:13px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--bad)}
+.on .dot{background:var(--ok)}
+main{display:grid;grid-template-columns:minmax(280px,340px) 1fr;gap:16px;padding:16px 24px;max-width:1400px;margin:0 auto}
+@media (max-width:860px){main{grid-template-columns:1fr;padding:12px}}
+.col{display:flex;flex-direction:column;gap:16px;min-width:0}
+section{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px;min-width:0}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+@media (max-width:600px){.kpis{grid-template-columns:repeat(2,1fr)}}
+.kpi b{display:block;font-size:26px;font-weight:600;line-height:1.1}
+.kpi span{color:var(--muted);font-size:13px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
+.row:first-of-type{margin-top:0}
+label{font-size:13px;color:var(--muted)}
+input,select,button{font:inherit;color:inherit}
+input,select{padding:6px 8px;border:1px solid var(--line);border-radius:4px;background:var(--bg);min-width:0}
+input[type=number]{width:84px}
+input.id{width:120px}
+button{padding:6px 12px;border:1px solid var(--line);border-radius:4px;background:var(--panel);cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button.danger{color:var(--bad);border-color:var(--bad)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.seg{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden;width:100%}
+.seg button{flex:1;border:0;border-radius:0;border-right:1px solid var(--line);padding:8px 4px;font-size:13px}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--accent);color:var(--accent-ink)}
+.nodes{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.node{border:1px solid var(--line);border-left:4px solid var(--ok);border-radius:4px;padding:12px}
+.node.dead{border-left-color:var(--bad)}
+.node h3{margin:0;font-size:15px;display:flex;justify-content:space-between;gap:8px}
+.node small{color:var(--muted)}
+.state{font-size:12px;font-weight:600;color:var(--ok)}
+.dead .state{color:var(--bad)}
+.bar{height:8px;background:var(--bar);border-radius:4px;margin:10px 0 4px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent);width:0}
+.dead .bar i{background:var(--bad)}
+.meta{display:flex;justify-content:space-between;font-size:13px;color:var(--muted)}
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-weight:600;color:var(--muted);padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+td.mono,.mono{font-family:var(--mono);font-size:12px}
+.s-ok{color:var(--ok)} .s-bad{color:var(--bad)}
+.empty{color:var(--muted);padding:8px 0}
+#toast{position:fixed;right:16px;bottom:16px;max-width:360px;padding:10px 14px;border-radius:4px;background:var(--ink);color:var(--bg);opacity:0;pointer-events:none;transition:opacity .2s}
+#toast.show{opacity:1}
+#toast.err{background:var(--bad);color:#fff}
+@media (prefers-reduced-motion:reduce){#toast{transition:none}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Load Balancer Control</h1>
+  <div class="chips" id="chips"></div>
+</header>
+
+<main>
+  <div class="col">
+    <section>
+      <h2>Dịch vụ</h2>
+      <div class="row"><span style="flex:1">Mock servers</span><button id="btn-mock"></button></div>
+      <div class="row"><span style="flex:1">Reverse proxy :8000</span><button id="btn-proxy"></button></div>
+    </section>
+
+    <section>
+      <h2>Thuật toán cân bằng tải</h2>
+      <div class="seg" id="algos">
+        <button data-a="round_robin">Round Robin</button>
+        <button data-a="least_connections">Least Conn</button>
+        <button data-a="consistent_hash">Consistent Hash</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Sinh tải</h2>
+      <div class="row">
+        <label>Luồng <input type="number" id="t-conc" value="1" min="1"></label>
+        <label>Giãn cách (s) <input type="number" id="t-delay" value="0.4" min="0.01" step="0.05"></label>
+      </div>
+      <div class="row"><button class="primary" id="t-start">Bắt đầu</button><button id="t-stop">Dừng</button></div>
+    </section>
+
+    <section>
+      <h2>Tiêm sự cố</h2>
+      <div class="row"><label>Node <select id="chaos-node"></select></label></div>
+      <div class="row">
+        <button class="danger" id="c-down">Đánh sập</button>
+        <button id="c-up">Khôi phục</button>
+      </div>
+      <div class="row">
+        <label>Độ trễ (ms) <input type="number" id="c-ms" value="500" min="0" step="100"></label>
+        <button id="c-delay">Áp dụng</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Quản lý backend</h2>
+      <div class="row">
+        <input class="id" id="b-id" placeholder="mock-node-4">
+        <input type="number" id="b-port" placeholder="Cổng">
+        <input type="number" id="b-weight" value="1" min="1" title="Trọng số">
+        <button class="primary" id="b-add">Thêm node</button>
+      </div>
+      <div class="row">
+        <label>Đổi trọng số <select id="w-node"></select></label>
+        <input type="number" id="w-val" value="1" min="1">
+        <button id="w-set">Lưu</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section>
+      <div class="kpis">
+        <div class="kpi"><b id="k-rps">0</b><span>request/giây (5s)</span></div>
+        <div class="kpi"><b id="k-total">0</b><span>tổng request</span></div>
+        <div class="kpi"><b id="k-succ">100%</b><span>thành công</span></div>
+        <div class="kpi"><b id="k-algo">-</b><span>thuật toán đang chạy</span></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Backend nodes</h2>
+      <div class="nodes" id="nodes"></div>
+    </section>
+
+    <section>
+      <h2>20 request gần nhất</h2>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Giờ</th><th>Client</th><th>Đường dẫn</th><th>Node</th><th>Mã</th><th>Quyết định</th></tr></thead>
+          <tbody id="events"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="events-empty">Chưa có request nào. Bật mock, proxy rồi bắt đầu sinh tải.</div>
+    </section>
+  </div>
+</main>
+<div id="toast" role="status"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let toastTimer, nodeKey = "", nodesCache = {}, pendingAlgo = null;
+
+function toast(msg, err) {
+  const t = $("#toast");
+  t.textContent = msg; t.className = "show" + (err ? " err" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.className = "", 3000);
+}
+
+async function api(path, body) {
+  try {
+    const r = await fetch(path, {
+      method: body ? "POST" : "GET",
+      headers: {"Content-Type": "application/json"},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || j.message || "HTTP " + r.status);
+    return j;
+  } catch (e) { toast(e.message, true); return null; }
+}
+
+async function act(path, body, okMsg) {
+  const j = await api(path, body);
+  if (j) { toast(j.message || okMsg || "Đã gửi lệnh"); poll(); }
+  return j;
+}
+
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+function fmtDecision(d) {
+  const p = (d || "").split("|");
+  return p.length === 5 ? `[${p[1]} < ${p[2]} <= ${p[4]}] ${p[3]}` : (d || "");
+}
+
+function chip(label, running) {
+  return `<span class="chip ${running ? "on" : ""}"><span class="dot"></span>${label}: ${running ? "đang chạy" : "đã dừng"}</span>`;
+}
+
+function setNodeOptions(nodes) {
+  const key = Object.keys(nodes).join(",");
+  if (key === nodeKey) return;
+  nodeKey = key;
+  const opts = Object.entries(nodes).map(([id, n]) => `<option value="${esc(id)}" data-port="${n.port}">${esc(id)} (:${n.port})</option>`).join("");
+  for (const sel of ["#chaos-node", "#w-node"]) {
+    const cur = $(sel).value;
+    $(sel).innerHTML = opts;
+    if (cur) $(sel).value = cur;
+  }
+}
+
+function render(s) {
+  const svc = s.services, m = s.metrics;
+  $("#chips").innerHTML = chip("Mock", svc.mock_servers.status === "running") +
+    chip("Proxy", svc.proxy.status === "running") + chip("Tải", svc.traffic.status === "running");
+  $("#btn-mock").textContent = svc.mock_servers.status === "running" ? "Dừng" : "Khởi động";
+  $("#btn-mock").className = svc.mock_servers.status === "running" ? "danger" : "primary";
+  $("#btn-proxy").textContent = svc.proxy.status === "running" ? "Dừng" : "Khởi động";
+  $("#btn-proxy").className = svc.proxy.status === "running" ? "danger" : "primary";
+
+  $("#k-rps").textContent = m.rps;
+  $("#k-total").textContent = m.total_requests;
+  $("#k-succ").textContent = m.success_pct + "%";
+  $("#k-algo").textContent = s.active_algo;
+  const algo = pendingAlgo || s.active_algo;
+  if (pendingAlgo && s.active_algo === pendingAlgo) pendingAlgo = null;
+  document.querySelectorAll("#algos button").forEach(b => b.setAttribute("aria-pressed", b.dataset.a === algo));
+
+  const nodes = svc.mock_servers.nodes || {};
+  nodesCache = nodes;
+  setNodeOptions(nodes);
+  const dist = m.node_distribution || {};
+  $("#nodes").innerHTML = Object.entries(nodes).map(([id, n]) => {
+    const pct = (dist[id] && dist[id].pct) || 0, cnt = (dist[id] && dist[id].count) || 0;
+    return `<div class="node ${n.alive ? "" : "dead"}">
+      <h3>${esc(id)} <span class="state">${n.alive ? "UP" : "DOWN"}</span></h3>
+      <small>cổng ${n.port}</small>
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      <div class="meta"><span>${pct}% tải (${cnt})</span><span>${n.alive ? n.latency_ms + " ms" : "HTTP " + n.status_code}</span></div>
+    </div>`;
+  }).join("") || `<div class="empty">Chưa có node nào. Khởi động mock servers.</div>`;
+
+  const ev = s.recent_events || [];
+  $("#events-empty").style.display = ev.length ? "none" : "block";
+  $("#events").innerHTML = ev.map(e => {
+    const ok = e.status >= 200 && e.status < 400;
+    return `<tr><td>${new Date(e.ts * 1000).toLocaleTimeString("vi-VN")}</td><td class="mono">${esc(e.client_ip)}</td>
+      <td class="mono">${esc(e.path)}</td><td>${esc(e.node)}</td>
+      <td class="${ok ? "s-ok" : "s-bad"}">${e.status}</td><td class="mono">${esc(fmtDecision(e.decision))}</td></tr>`;
+  }).join("");
+}
+
+let failing = false;
+async function poll() {
+  try {
+    const r = await fetch("/api/stats");
+    render(await r.json());
+    failing = false;
+  } catch (e) {
+    if (!failing) toast("Mất kết nối tới web_dashboard (:8001)", true);
+    failing = true;
+  }
+}
+
+// Điều khiển dịch vụ: nút đổi giữa khởi động / dừng theo trạng thái hiện tại
+for (const [btn, name] of [["#btn-mock", "mock"], ["#btn-proxy", "proxy"]]) {
+  $(btn).onclick = () => act(`/api/control/${name}`, {action: $(btn).textContent === "Dừng" ? "stop" : "start"});
+}
+$("#t-start").onclick = () => act("/api/control/traffic", {
+  action: "start", concurrency: +$("#t-conc").value || 1, delay: +$("#t-delay").value || 0.4, requests: 0});
+$("#t-stop").onclick = () => act("/api/control/traffic", {action: "stop"});
+
+document.querySelectorAll("#algos button").forEach(b => b.onclick = async () => {
+  pendingAlgo = b.dataset.a;
+  const j = await api("/api/control/algorithm", {algorithm: b.dataset.a});
+  if (j) toast("Đã chuyển sang " + b.dataset.a); else pendingAlgo = null;
+  poll();
+});
+
+const chaosPort = () => $("#chaos-node").selectedOptions[0]?.dataset.port;
+function chaos(action, extra) {
+  const port = chaosPort();
+  if (!port) return toast("Chưa có node để tiêm sự cố", true);
+  act("/api/control/chaos", {port: +port, action, ...extra});
+}
+$("#c-down").onclick = () => chaos("down");
+$("#c-up").onclick = () => chaos("up");
+$("#c-delay").onclick = () => chaos("delay", {ms: +$("#c-ms").value || 0});
+
+$("#b-add").onclick = async () => {
+  const id = $("#b-id").value.trim(), port = +$("#b-port").value;
+  if (!id || !port) return toast("Cần nhập ID và cổng", true);
+  const j = await act("/api/control/backend", {action: "add", id, port, weight: +$("#b-weight").value || 1});
+  if (j) { $("#b-id").value = ""; $("#b-port").value = ""; }
+};
+$("#w-set").onclick = () => {
+  const id = $("#w-node").value;
+  if (!id) return toast("Chưa có node để đổi trọng số", true);
+  act("/api/control/backend", {action: "weight", id, weight: +$("#w-val").value || 1});
+};
+
+poll();
+setInterval(poll, 1000);
+</script>
+</body>
+</html>

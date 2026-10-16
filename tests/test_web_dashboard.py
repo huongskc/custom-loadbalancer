@@ -263,7 +263,15 @@ def test_api_static_fallback():
 
         try:
             async with aiohttp.ClientSession() as session:
+                # 1. Kiểm tra phục vụ root / (trả về web/index.html thật hoặc fallback HTML)
                 async with session.get(f"{base_url}/") as resp:
+                    assert resp.status == 200
+                    assert resp.content_type == "text/html"
+                    text = await resp.text()
+                    assert ("Load Balancer Control" in text) or ("Web Dashboard Backend" in text)
+
+                # 2. Kiểm tra phục vụ file không tồn tại -> kích hoạt fallback HTML mặc định
+                async with session.get(f"{base_url}/non_existent_page.xyz") as resp:
                     assert resp.status == 200
                     assert resp.content_type == "text/html"
                     text = await resp.text()

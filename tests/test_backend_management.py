@@ -190,7 +190,48 @@ def test_web_dashboard_control_backend_error_cases():
                 # Unknown action
                 async with session.post(f"{base_url}/api/control/backend", json={"action": "delete"}) as resp:
                     assert resp.status == 400
+
+                # Add when Mock is not running -> 409
+                async with session.post(f"{base_url}/api/control/backend", json={"action": "add", "id": "node-y", "port": 9005}) as resp:
+                    assert resp.status == 409
+                    err = await resp.json()
+                    assert "Mock cluster is not running" in err["error"]
         finally:
             await runner.cleanup()
 
     asyncio.run(_test())
+
+
+def test_proxy_api_manage_backend_reset():
+    """Kiểm tra endpoint /api/backend với action='reset' khôi phục backends về mặc định."""
+    async def _test():
+        backends = [{"id": "node-1", "host": "127.0.0.1", "port": 9001, "weight": 1}]
+        cfg = {"backends": backends, "algorithm": "round_robin"}
+        runner, port, base_url = await start_proxy_test_server(cfg)
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                # 1. Thêm node-2
+                await session.post(f"{base_url}/api/backend", json={"action": "add", "id": "node-2", "port": 9002, "weight": 2})
+
+                # 2. Reset về mặc định
+                async with session.post(f"{base_url}/api/backend", json={"action": "reset"}) as resp:
+                    assert resp.status == 200
+                    data = await resp.json()
+                    assert data["status"] == "ok"
+                    assert len(data["backends"]) >= 1
+        finally:
+            await runner.cleanup()
+
+    asyncio.run(_test())
+
+
+def test_process_manager_reset_mock_ports():
+    """Kiểm tra ProcessManager.reset_mock_ports() khôi phục đúng default_ports."""
+    pm = ProcessManager()
+    pm.mock_ports.append(9999)
+    assert 9999 in pm.mock_ports
+    pm.reset_mock_ports()
+    assert 9999 not in pm.mock_ports
+    assert pm.mock_ports == pm.default_ports
+

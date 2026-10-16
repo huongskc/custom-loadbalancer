@@ -61,11 +61,17 @@ class ProcessManager:
 
     def __init__(self, project_root: Path = PROJECT_ROOT, mock_ports: Optional[List[int]] = None):
         self.project_root = project_root
-        self.mock_ports = mock_ports or load_backend_ports(project_root / "config.yaml")
+        self.default_ports = load_backend_ports(project_root / "config.yaml")
+        self.mock_ports = mock_ports or list(self.default_ports)
         self.mock_proc: Optional[subprocess.Popen] = None
         self.proxy_proc: Optional[subprocess.Popen] = None
         self.traffic_proc: Optional[subprocess.Popen] = None
         self.traffic_config: Dict[str, Any] = {"concurrency": 1, "delay": 0.4, "requests": 0}
+
+    def reset_mock_ports(self):
+        """Khôi phục danh sách mock_ports về mặc định từ config.yaml."""
+        self.mock_ports = list(self.default_ports)
+        logger.info(f"[PROCESS] Reset mock_ports to defaults: {self.mock_ports}")
 
     async def _start_service(self, name: str, script_rel: str, ports: List[int]) -> Dict[str, Any]:
         """Khởi chạy tiến trình nền và thăm dò cổng mạng cho đến khi sẵn sàng."""
@@ -96,11 +102,13 @@ class ProcessManager:
         return {"status": "started", "message": f"{name} process started, awaiting readiness"}
 
     async def start_mock(self) -> Dict[str, Any]:
-        """Khởi chạy cụm Mock Servers theo danh sách cổng cấu hình."""
+        """Khởi chạy cụm Mock Servers theo danh sách cổng cấu hình mặc định."""
+        self.reset_mock_ports()
         return await self._start_service("mock", "mock/mock_servers.py", self.mock_ports)
 
     async def start_proxy(self) -> Dict[str, Any]:
         """Khởi chạy Reverse Proxy (:8000)."""
+        self.reset_mock_ports()
         return await self._start_service("proxy", "proxy.py", [8000])
 
     def start_traffic(self, concurrency: int = 1, delay: float = 0.4, requests: int = 0) -> Dict[str, Any]:
@@ -127,6 +135,9 @@ class ProcessManager:
 
     def force_kill(self, name: str) -> bool:
         """Dừng cưỡng chế tức thì (Immediate Force Kill) tiến trình con chỉ định."""
+        if name in ("mock", "proxy"):
+            self.reset_mock_ports()
+
         proc: Optional[subprocess.Popen] = getattr(self, f"{name}_proc", None)
         setattr(self, f"{name}_proc", None)
         if proc and proc.poll() is None:
@@ -223,7 +234,7 @@ class StatsAggregator:
         nodes_info = {}
         target_ports = ports or load_backend_ports()
         for idx, port in enumerate(target_ports, 1):
-            fallback_id = f"mock-node-{idx}"
+            fallback_id = f"mock-node-{port - 9000 if 9000 < port < 10000 else idx}"
             start_t = time.perf_counter()
             try:
                 async with session.get(f"http://127.0.0.1:{port}/healthz", timeout=aiohttp.ClientTimeout(total=0.5)) as resp:
@@ -253,9 +264,12 @@ class StatsAggregator:
         if services["mock_servers"]["status"] == "running":
             services["mock_servers"]["nodes"] = await cls.check_mock_health(session, target_ports)
         else:
+            default_ports = getattr(pm, "default_ports", load_backend_ports())
             services["mock_servers"]["nodes"] = {
-                f"mock-node-{idx}": {"port": p, "alive": False, "status_code": 0, "latency_ms": 0.0}
-                for idx, p in enumerate(target_ports, 1)
+                f"mock-node-{p - 9000 if 9000 < p < 10000 else idx}": {
+                    "port": p, "alive": False, "status_code": 0, "latency_ms": 0.0
+                }
+                for idx, p in enumerate(default_ports, 1)
             }
 
         detected_algo = "consistent_hash"
@@ -309,7 +323,13 @@ async def handle_get_stats(request: web.Request) -> web.Response:
 
 
 async def handle_control_mock(request: web.Request) -> web.Response:
-    return await _service_lifecycle(request, "mock", request.app[PM_KEY].start_mock)
+    res = await _service_lifecycle(request, "mock", request.app[PM_KEY].start_mock)
+    if is_port_open(8000):
+        try:
+            await _forward_post(request.app[SESSION_KEY], "http://127.0.0.1:8000/api/backend", {"action": "reset"})
+        except Exception:
+            pass
+    return res
 
 
 async def handle_control_proxy(request: web.Request) -> web.Response:
@@ -321,7 +341,11 @@ async def handle_control_traffic(request: web.Request) -> web.Response:
     data = await _parse_json(request)
     action = data.get("action", "start")
     if action == "start":
-        res = pm.start_traffic(data.get("concurrency", 1), data.get("delay", 0.4), data.get("requests", 0))
+        cfg = data.get("config", {}) if isinstance(data.get("config"), dict) else data
+        concurrency = cfg.get("concurrency", data.get("concurrency", 1))
+        delay = cfg.get("delay", data.get("delay", 0.4))
+        requests = cfg.get("requests", data.get("requests", 0))
+        res = pm.start_traffic(concurrency, delay, requests)
         return web.json_response(res)
     if action == "stop":
         pm.force_kill("traffic")
@@ -362,19 +386,34 @@ async def handle_control_backend(request: web.Request) -> web.Response:
         except (ValueError, TypeError):
             return web.json_response({"error": "'port' must be an integer"}, status=400)
 
-        # 1. Nếu cụm Mock Server đang chạy, yêu cầu cụm spawn thêm server con mới
+        # 1. Kiểm tra điều kiện tiên quyết: Mock cluster và Proxy phải đang RUNNING
         services = pm.get_process_status()
-        if services["mock_servers"]["status"] == "running":
-            spawn_port = pm.mock_ports[0] if pm.mock_ports else 9001
-            spawn_url = f"http://127.0.0.1:{spawn_port}/chaos/spawn"
-            try:
-                async with session.post(spawn_url, json={"name": b_id, "port": port}, timeout=aiohttp.ClientTimeout(total=2.0)) as resp:
-                    if resp.status not in (200, 201):
-                        return web.json_response({"error": f"Failed to spawn mock node: HTTP {resp.status}"}, status=502)
-            except Exception as e:
-                return web.json_response({"error": f"Failed to communicate with mock cluster: {e}"}, status=502)
+        if services["mock_servers"]["status"] != "running":
+            return web.json_response({
+                "error": "Mock cluster is not running. Please start Mock servers before adding backend nodes"
+            }, status=409)
 
-        # 2. Chuyển tiếp lệnh sang Proxy (:8000) để thêm vào thuật toán cân bằng tải
+        if services["proxy"]["status"] != "running":
+            return web.json_response({
+                "error": "Proxy is not running. Please start Proxy before adding backend nodes"
+            }, status=409)
+
+        if port in pm.mock_ports:
+            return web.json_response({
+                "error": f"Backend node with port {port} already exists in cluster"
+            }, status=400)
+
+        # 2. Yêu cầu cụm Mock Server spawn thêm server con mới
+        spawn_port = pm.mock_ports[0] if pm.mock_ports else 9001
+        spawn_url = f"http://127.0.0.1:{spawn_port}/chaos/spawn"
+        try:
+            async with session.post(spawn_url, json={"name": b_id, "port": port}, timeout=aiohttp.ClientTimeout(total=2.0)) as resp:
+                if resp.status not in (200, 201):
+                    return web.json_response({"error": f"Failed to spawn mock node: HTTP {resp.status}"}, status=502)
+        except Exception as e:
+            return web.json_response({"error": f"Failed to communicate with mock cluster: {e}"}, status=502)
+
+        # 3. Chuyển tiếp lệnh sang Proxy (:8000) để thêm vào thuật toán cân bằng tải
         res = await _forward_post(session, "http://127.0.0.1:8000/api/backend", data)
         if res.status == 200:
             if port not in pm.mock_ports:
@@ -388,7 +427,11 @@ async def handle_control_backend(request: web.Request) -> web.Response:
             return web.json_response({"error": "Missing required fields: 'id' and 'weight'"}, status=400)
         return await _forward_post(session, "http://127.0.0.1:8000/api/backend", data)
 
-    return web.json_response({"error": f"Unknown action: '{action}'. Available: 'add', 'weight'"}, status=400)
+    elif action == "reset":
+        pm.reset_mock_ports()
+        return await _forward_post(session, "http://127.0.0.1:8000/api/backend", data)
+
+    return web.json_response({"error": f"Unknown action: '{action}'. Available: 'add', 'weight', 'reset'"}, status=400)
 
 
 async def handle_static_fallback(request: web.Request) -> web.Response:
