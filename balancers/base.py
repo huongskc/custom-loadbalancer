@@ -138,3 +138,9 @@ class BaseBalancer(ABC):
         """
         return ""
 
+    def get_visualizer_state(self) -> dict:
+        """
+        Hook đa hình: Trả về dữ liệu trạng thái phục vụ hiển thị Algorithm Visualizer.
+        """
+        return {"type": self.name, "backends": [b.to_dict() for b in self.backends]}
+

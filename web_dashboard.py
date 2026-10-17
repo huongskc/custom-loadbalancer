@@ -30,6 +30,7 @@ WEB_DIR = PROJECT_ROOT / "web"
 PM_KEY = web.AppKey("pm", Any)
 SESSION_KEY = web.AppKey("session", Optional[aiohttp.ClientSession])
 LOG_PATH_KEY = web.AppKey("log_path", Path)
+SHUTDOWN_KEY = web.AppKey("shutdown_event", asyncio.Event)
 
 
 def load_backend_ports(config_path: Path = CONFIG_PATH) -> List[int]:
@@ -56,6 +57,58 @@ def is_port_open(port: int, host: str = "127.0.0.1", timeout: float = 0.2) -> bo
         return False
 
 
+def kill_process_tree(pid: int):
+    """Tiêu diệt toàn bộ cây tiến trình (Process Tree) tương thích Windows và POSIX."""
+    if not pid or pid <= 0:
+        return
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=2.0,
+            )
+        except Exception:
+            pass
+    else:
+        try:
+            import signal
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+        except Exception:
+            try:
+                os.kill(pid, 9)
+            except Exception:
+                pass
+
+
+def is_pid_running(pid: int) -> bool:
+    """Kiểm tra một PID có đang thực sự tồn tại và chạy trên hệ thống hay không."""
+    if not pid or pid <= 0:
+        return False
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            h_process = kernel32.OpenProcess(0x1000, False, pid)
+            if not h_process:
+                return False
+            exit_code = ctypes.c_ulong()
+            if kernel32.GetExitCodeProcess(h_process, ctypes.byref(exit_code)):
+                kernel32.CloseHandle(h_process)
+                return exit_code.value == 259  # STILL_ACTIVE
+            kernel32.CloseHandle(h_process)
+            return False
+        except Exception:
+            return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+
 class ProcessManager:
     """Quản lý vòng đời tiến trình con (Mock, Proxy, Traffic) với Force Kill tức thì."""
 
@@ -67,6 +120,7 @@ class ProcessManager:
         self.proxy_proc: Optional[subprocess.Popen] = None
         self.traffic_proc: Optional[subprocess.Popen] = None
         self.traffic_config: Dict[str, Any] = {"concurrency": 1, "delay": 0.4, "requests": 0}
+        self.traffic_pid_file = self.project_root / "logs" / "traffic.pid"
 
     def reset_mock_ports(self):
         """Khôi phục danh sách mock_ports về mặc định từ config.yaml."""
@@ -111,55 +165,110 @@ class ProcessManager:
         self.reset_mock_ports()
         return await self._start_service("proxy", "proxy.py", [8000])
 
-    def start_traffic(self, concurrency: int = 1, delay: float = 0.4, requests: int = 0) -> Dict[str, Any]:
+    def start_traffic(self, delay: float = 0.4, requests: int = 0, concurrency: int = 1) -> Dict[str, Any]:
         """Khởi chạy bộ sinh tải độc lập (scripts/test_traffic.py). URL cố định tại port 8000."""
         self.force_kill("traffic")
         self.traffic_config = {
-            "concurrency": max(1, int(concurrency)),
             "delay": max(0.01, float(delay)),
             "requests": max(0, int(requests)),
+            "concurrency": max(1, int(concurrency)),
         }
         cmd = [
             sys.executable,
             str(self.project_root / "scripts" / "test_traffic.py"),
             "--url", "http://127.0.0.1:8000/api/order",
-            "--concurrency", str(self.traffic_config["concurrency"]),
             "--delay", str(self.traffic_config["delay"]),
             "--requests", str(self.traffic_config["requests"]),
+            "--concurrency", str(self.traffic_config["concurrency"]),
         ]
         logger.info(f"Starting traffic generator: {cmd}")
         self.traffic_proc = subprocess.Popen(
             cmd, cwd=str(self.project_root), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
+        try:
+            self.traffic_pid_file.parent.mkdir(parents=True, exist_ok=True)
+            self.traffic_pid_file.write_text(str(self.traffic_proc.pid), encoding="utf-8")
+        except Exception as e:
+            logger.warning(f"Could not persist traffic PID: {e}")
         return {"status": "ok", "message": "Traffic generator started", "config": self.traffic_config}
 
-    def force_kill(self, name: str) -> bool:
+    def force_kill(self, name: str, is_teardown: bool = False) -> bool:
         """Dừng cưỡng chế tức thì (Immediate Force Kill) tiến trình con chỉ định."""
         if name in ("mock", "proxy"):
             self.reset_mock_ports()
 
         proc: Optional[subprocess.Popen] = getattr(self, f"{name}_proc", None)
         setattr(self, f"{name}_proc", None)
-        if proc and proc.poll() is None:
-            logger.info(f"Force killing process: {name} (PID: {proc.pid})")
+        killed = False
+
+        if proc:
+            pid = proc.pid
+            logger.info(f"Force killing process tree: {name} (PID: {pid})")
+            kill_process_tree(pid)
             try:
-                proc.kill()
-                proc.wait(timeout=1.0)
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait(timeout=1.0)
             except Exception as e:
                 logger.warning(f"Error while killing process {name}: {e}")
-            return True
-        return False
+            killed = True
+
+        if name == "traffic":
+            if self.traffic_pid_file.exists():
+                try:
+                    old_pid = int(self.traffic_pid_file.read_text(encoding="utf-8").strip())
+                    if is_pid_running(old_pid):
+                        logger.info(f"Force killing persisted traffic PID: {old_pid}")
+                        kill_process_tree(old_pid)
+                        killed = True
+                except Exception as e:
+                    logger.warning(f"Error reading persisted traffic PID: {e}")
+                finally:
+                    try:
+                        self.traffic_pid_file.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+
+            # Dọn dẹp triệt để các tiến trình test_traffic.py mồ côi (chỉ chạy khi không phải teardown)
+            if sys.platform == "win32" and not is_teardown:
+                try:
+                    subprocess.run(
+                        ["powershell", "-NoProfile", "-Command",
+                         "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*test_traffic.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=2.0,
+                    )
+                except (KeyboardInterrupt, SystemExit, Exception):
+                    pass
+
+        return killed
 
     def stop_all(self):
         """Dừng toàn bộ các tiến trình con đang quản lý."""
         for name in ("traffic", "proxy", "mock"):
-            self.force_kill(name)
+            try:
+                self.force_kill(name, is_teardown=True)
+            except (KeyboardInterrupt, SystemExit, Exception):
+                pass
 
     def get_process_status(self) -> Dict[str, Any]:
         """Tổng hợp trạng thái sống/chết của các tiến trình."""
         mock_on = (self.mock_proc is not None and self.mock_proc.poll() is None) or all(is_port_open(p) for p in self.mock_ports)
         proxy_on = (self.proxy_proc is not None and self.proxy_proc.poll() is None) or is_port_open(8000)
-        traffic_on = self.traffic_proc is not None and self.traffic_proc.poll() is None
+
+        traffic_pid = self.traffic_proc.pid if (self.traffic_proc and self.traffic_proc.poll() is None) else None
+        if not traffic_pid and self.traffic_pid_file.exists():
+            try:
+                file_pid = int(self.traffic_pid_file.read_text(encoding="utf-8").strip())
+                if is_pid_running(file_pid):
+                    traffic_pid = file_pid
+                else:
+                    self.traffic_pid_file.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        traffic_on = traffic_pid is not None
 
         return {
             "mock_servers": {
@@ -174,7 +283,7 @@ class ProcessManager:
             },
             "traffic": {
                 "status": "running" if traffic_on else "stopped",
-                "pid": self.traffic_proc.pid if (self.traffic_proc and self.traffic_proc.poll() is None) else None,
+                "pid": traffic_pid,
                 "config": self.traffic_config,
             },
         }
@@ -184,13 +293,16 @@ class StatsAggregator:
     """Đọc tệp access.log và tổng hợp số liệu thời gian thực."""
 
     @staticmethod
-    def read_recent_events(log_path: Path = ACCESS_LOG_PATH, max_lines: int = 1000) -> List[Dict]:
+    def read_recent_events(log_path: Path = ACCESS_LOG_PATH, max_lines: Optional[int] = None) -> List[Dict]:
         if not log_path.exists():
             return []
         events: List[Dict] = []
         try:
             with open(log_path, "r", encoding="utf-8") as f:
-                for line in f.readlines()[-max_lines:]:
+                lines = f.readlines()
+                if max_lines is not None and max_lines > 0:
+                    lines = lines[-max_lines:]
+                for line in lines:
                     line = line.strip()
                     if line:
                         try:
@@ -230,9 +342,10 @@ class StatsAggregator:
         }
 
     @staticmethod
-    async def check_mock_health(session: aiohttp.ClientSession, ports: Optional[List[int]] = None) -> Dict[str, Any]:
+    async def check_mock_health(session: aiohttp.ClientSession, ports: Optional[List[int]] = None, weights: Optional[Dict[int, int]] = None) -> Dict[str, Any]:
         nodes_info = {}
         target_ports = ports or load_backend_ports()
+        w_map = weights or {}
         for idx, port in enumerate(target_ports, 1):
             fallback_id = f"mock-node-{port - 9000 if 9000 < port < 10000 else idx}"
             start_t = time.perf_counter()
@@ -246,10 +359,14 @@ class StatsAggregator:
                         pass
                     node_id = data.get("node") or fallback_id
                     nodes_info[node_id] = {
-                        "port": port, "alive": resp.status == 200, "status_code": resp.status, "latency_ms": lat
+                        "port": port, "alive": resp.status == 200, "status_code": resp.status, "latency_ms": lat,
+                        "weight": w_map.get(port, 1),
                     }
             except Exception:
-                nodes_info[fallback_id] = {"port": port, "alive": False, "status_code": 0, "latency_ms": 0.0}
+                nodes_info[fallback_id] = {
+                    "port": port, "alive": False, "status_code": 0, "latency_ms": 0.0,
+                    "weight": w_map.get(port, 1),
+                }
         return nodes_info
 
     @classmethod
@@ -261,22 +378,65 @@ class StatsAggregator:
         services = pm.get_process_status()
         target_ports = getattr(pm, "mock_ports", load_backend_ports())
 
+        balancer_state = None
+        if services["proxy"]["status"] == "running":
+            try:
+                async with session.get("http://127.0.0.1:8000/api/balancer/state", timeout=aiohttp.ClientTimeout(total=0.5)) as b_resp:
+                    if b_resp.status == 200:
+                        balancer_state = await b_resp.json()
+            except Exception:
+                pass
+
+        # Trích xuất trọng số của từng node từ Proxy hoặc config mặc định
+        weights = {}
+        if balancer_state and balancer_state.get("backends"):
+            for b in balancer_state["backends"]:
+                weights[b.get("port")] = b.get("weight", 1)
+        elif balancer_state and balancer_state.get("ring"):
+            for v in balancer_state["ring"]:
+                weights[v.get("backend_port")] = v.get("weight", 1)
+        else:
+            try:
+                cfg_backends = load_config(pm.project_root / "config.yaml").get("backends", [])
+                for b in cfg_backends:
+                    weights[b.get("port")] = b.get("weight", 1)
+            except Exception:
+                pass
+
         if services["mock_servers"]["status"] == "running":
-            services["mock_servers"]["nodes"] = await cls.check_mock_health(session, target_ports)
+            services["mock_servers"]["nodes"] = await cls.check_mock_health(session, target_ports, weights)
         else:
             default_ports = getattr(pm, "default_ports", load_backend_ports())
             services["mock_servers"]["nodes"] = {
                 f"mock-node-{p - 9000 if 9000 < p < 10000 else idx}": {
-                    "port": p, "alive": False, "status_code": 0, "latency_ms": 0.0
+                    "port": p, "alive": False, "status_code": 0, "latency_ms": 0.0,
+                    "weight": weights.get(p, 5 if idx == 1 else 1),
                 }
                 for idx, p in enumerate(default_ports, 1)
             }
 
         detected_algo = "consistent_hash"
-        for r in reversed(events):
-            if r.get("algo") and r["algo"] != "unknown":
-                detected_algo = r["algo"]
-                break
+        if balancer_state and balancer_state.get("algorithm"):
+            detected_algo = balancer_state["algorithm"]
+        else:
+            for r in reversed(events):
+                if r.get("algo") and r["algo"] != "unknown":
+                    detected_algo = r["algo"]
+                    break
+
+        if not balancer_state:
+            default_ports = getattr(pm, "default_ports", load_backend_ports())
+            default_backends = [
+                {"id": f"mock-node-{idx}", "port": p, "weight": weights.get(p, 5 if idx == 1 else 1), "alive": False, "active_conns": 0}
+                for idx, p in enumerate(default_ports, 1)
+            ]
+            balancer_state = {
+                "type": detected_algo,
+                "algorithm": detected_algo,
+                "backends": default_backends,
+            }
+
+        last_event = events[-1] if events else None
 
         return {
             "timestamp": time.time(),
@@ -284,6 +444,8 @@ class StatsAggregator:
             "services": services,
             "metrics": metrics,
             "recent_events": events[-20:][::-1],
+            "balancer_state": balancer_state,
+            "last_event": last_event,
         }
 
 
@@ -345,7 +507,7 @@ async def handle_control_traffic(request: web.Request) -> web.Response:
         concurrency = cfg.get("concurrency", data.get("concurrency", 1))
         delay = cfg.get("delay", data.get("delay", 0.4))
         requests = cfg.get("requests", data.get("requests", 0))
-        res = pm.start_traffic(concurrency, delay, requests)
+        res = pm.start_traffic(delay=delay, requests=requests, concurrency=concurrency)
         return web.json_response(res)
     if action == "stop":
         pm.force_kill("traffic")
@@ -367,7 +529,20 @@ async def handle_control_chaos(request: web.Request) -> web.Response:
         return web.json_response({"error": "Missing 'port' or 'action' parameter"}, status=400)
 
     url = f"http://127.0.0.1:{port}/chaos/{'delay?ms=' + str(data.get('ms', 500.0)) if action == 'delay' else action}"
-    return await _forward_post(request.app[SESSION_KEY], url)
+    res = await _forward_post(request.app[SESSION_KEY], url)
+
+    # Nếu action là down hoặc up, lập tức thông báo sang Proxy (:8000) để Hash Ring và Balancer cập nhật ngay lập tức!
+    if res.status == 200 and action in ("down", "up") and is_port_open(8000):
+        try:
+            await _forward_post(
+                request.app[SESSION_KEY],
+                "http://127.0.0.1:8000/api/backend/status",
+                {"port": int(port), "alive": action == "up"},
+            )
+        except Exception as e:
+            logger.warning(f"Failed to sync backend status to proxy: {e}")
+
+    return res
 
 
 async def handle_control_backend(request: web.Request) -> web.Response:
@@ -434,6 +609,62 @@ async def handle_control_backend(request: web.Request) -> web.Response:
     return web.json_response({"error": f"Unknown action: '{action}'. Available: 'add', 'weight', 'reset'"}, status=400)
 
 
+async def handle_events_stream(request: web.Request) -> web.StreamResponse:
+    """
+    Server-Sent Events (SSE) endpoint: Phát trực tiếp các sự kiện truy cập mới (Realtime 0ms)
+    từ logs/access.log tới Web Dashboard để visualizer cập nhật ngay lập tức.
+    """
+    response = web.StreamResponse(
+        status=200,
+        reason="OK",
+        headers={
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+    await response.prepare(request)
+
+    log_path: Path = request.app[LOG_PATH_KEY]
+    last_pos = log_path.stat().st_size if log_path.exists() else 0
+
+    try:
+        # Gửi thông điệp ping kết nối ban đầu
+        await response.write(b": connected\n\n")
+
+        shutdown_event: Optional[asyncio.Event] = request.app.get(SHUTDOWN_KEY)
+        while shutdown_event is None or not shutdown_event.is_set():
+            if request.transport is None or request.transport.is_closing():
+                break
+
+            if log_path.exists():
+                curr_size = log_path.stat().st_size
+                if curr_size > last_pos:
+                    with open(log_path, "r", encoding="utf-8") as f:
+                        f.seek(last_pos)
+                        lines = f.readlines()
+                        last_pos = f.tell()
+
+                    for line in lines:
+                        line = line.strip()
+                        if line:
+                            try:
+                                evt = json.loads(line)
+                                msg = f"data: {json.dumps(evt)}\n\n".encode("utf-8")
+                                await response.write(msg)
+                            except Exception:
+                                pass
+                elif curr_size < last_pos:
+                    # Tệp log bị truncate / reset
+                    last_pos = 0
+
+            await asyncio.sleep(0.04)  # 40ms kiểm tra một lần - siêu nhẹ và mượt mà (~25fps)
+    except (asyncio.CancelledError, ConnectionResetError, Exception):
+        pass
+    return response
+
+
 async def handle_static_fallback(request: web.Request) -> web.Response:
     """Phục vụ file web/ hoặc trả về landing page HTML đơn giản."""
     path = request.match_info.get("path", "")
@@ -454,21 +685,31 @@ def create_dashboard_app(
     app[PM_KEY] = pm or ProcessManager()
     app[SESSION_KEY] = session
     app[LOG_PATH_KEY] = log_path or ACCESS_LOG_PATH
+    shutdown_event = asyncio.Event()
+    app[SHUTDOWN_KEY] = shutdown_event
 
     async def on_startup(app: web.Application):
         if app[SESSION_KEY] is None or app[SESSION_KEY].closed:
             app[SESSION_KEY] = aiohttp.ClientSession()
 
     async def on_cleanup(app: web.Application):
-        if app.get(SESSION_KEY) and not app[SESSION_KEY].closed:
-            await app[SESSION_KEY].close()
-        app[PM_KEY].stop_all()
+        shutdown_event.set()
+        try:
+            if app.get(SESSION_KEY) and not app[SESSION_KEY].closed:
+                await app[SESSION_KEY].close()
+        except Exception:
+            pass
+        try:
+            app[PM_KEY].stop_all()
+        except (KeyboardInterrupt, SystemExit, Exception):
+            pass
 
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
 
     # Đăng ký các endpoints API
     app.router.add_get("/api/stats", handle_get_stats)
+    app.router.add_get("/api/events/stream", handle_events_stream)
     app.router.add_post("/api/control/mock", handle_control_mock)
     app.router.add_post("/api/control/proxy", handle_control_proxy)
     app.router.add_post("/api/control/traffic", handle_control_traffic)
@@ -488,7 +729,10 @@ def main():
     pm = ProcessManager()
     atexit.register(pm.stop_all)
     logger.info(f"Starting Load Balancer Web Dashboard on http://{args.host}:{args.port}...")
-    web.run_app(create_dashboard_app(pm=pm), host=args.host, port=args.port)
+    try:
+        web.run_app(create_dashboard_app(pm=pm), host=args.host, port=args.port)
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("[SHUTDOWN] Web Dashboard stopped gracefully.")
 
 
 if __name__ == "__main__":

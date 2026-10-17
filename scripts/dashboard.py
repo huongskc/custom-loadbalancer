@@ -168,8 +168,8 @@ def render_live_dashboard(
     return "\n".join(lines)
 
 
-def load_events_from_log(log_path: Path, max_lines: int = 1000) -> List[Dict]:
-    """Đọc và parse các dòng JSON mới nhất từ access.log."""
+def load_events_from_log(log_path: Path, max_lines: Optional[int] = None) -> List[Dict]:
+    """Đọc và parse các dòng JSON từ access.log."""
     if not log_path.exists():
         return []
 
@@ -177,7 +177,9 @@ def load_events_from_log(log_path: Path, max_lines: int = 1000) -> List[Dict]:
     try:
         with open(log_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
-            for line in lines[-max_lines:]:
+            if max_lines is not None and max_lines > 0:
+                lines = lines[-max_lines:]
+            for line in lines:
                 line = line.strip()
                 if line:
                     try:

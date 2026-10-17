@@ -113,21 +113,21 @@ async def run_traffic_batch(
 
 async def run_traffic_continuous(
     target_url: str,
-    concurrency: int = 1,
-    delay: float = 0.5,
+    delay: float = 0.4,
     client_ips: Optional[List[str]] = None,
+    concurrency: int = 1,
 ) -> List[Dict]:
     """
-    Bắn tải liên tục với nhịp độ ổn định (~2 req/s mặc định) phục vụ quan sát.
+    Bắn tải liên tục với nhịp độ theo khoảng nghỉ (delay) phục vụ quan sát.
     Thuần túy sinh tải: in tiến độ từng request trực tiếp ra console, không vẽ lại màn hình.
+    Các request chạy song song bất đồng bộ, tự nhiên chồng lấn kết nối khi mạng chậm hoặc delay ngắn.
     Chỉ dừng khi người dùng nhấn Ctrl+C (KeyboardInterrupt).
     """
     ips = client_ips or DEFAULT_CLIENT_IPS
-    semaphore = asyncio.Semaphore(concurrency)
     stop_event = asyncio.Event()
 
     print(f"[*] Khởi động Traffic Generator -> {target_url}")
-    print(f"[*] Cấu hình: delay={delay}s (~{1/delay if delay > 0 else 999:.1f} req/s), workers={concurrency}")
+    print(f"[*] Cấu hình: delay={delay}s (~{1/delay if delay > 0 else 999:.1f} req/s)")
     print(f"[*] Mở Terminal khác gõ `python scripts/dashboard.py` để xem Live Dashboard")
     print(f"[*] Nhấn Ctrl+C để dừng bắn tải.\n" + "-" * 74)
 
@@ -141,16 +141,17 @@ async def run_traffic_continuous(
                 req_id += 1
 
                 async def fire(cid: int, cip: str):
-                    async with semaphore:
-                        res = await send_single_request(session, target_url, cip, cid)
-                        status_str = f"HTTP {res['status']}" if res['status'] > 0 else "FAIL"
-                        print(f"[TRAFFIC #{cid + 1:>4}] Client: {cip:<15} -> {res['node']:<14} ({status_str:<8}) | {res['latency_ms']:5.1f}ms")
+                    res = await send_single_request(session, target_url, cip, cid)
+                    status_str = f"HTTP {res['status']}" if res['status'] > 0 else "FAIL"
+                    print(f"[TRAFFIC #{cid + 1:>4}] Client: {cip:<15} -> {res['node']:<14} ({status_str:<8}) | {res['latency_ms']:5.1f}ms")
 
-                # Chạy worker trong background
+                # Chạy worker trong background hoàn toàn bất đồng bộ
                 asyncio.create_task(fire(current_id, client_ip))
 
                 if delay > 0:
                     await asyncio.sleep(delay)
+                else:
+                    await asyncio.sleep(0.001)
 
         except (asyncio.CancelledError, KeyboardInterrupt):
             pass
@@ -160,8 +161,8 @@ async def main_async():
     parser = argparse.ArgumentParser(description="Load Balancer Traffic Generator (Pure Load Engine)")
     parser.add_argument("--url", default="http://127.0.0.1:8000/api/order", help="Target Proxy URL")
     parser.add_argument("--requests", type=int, default=0, help="Số lượng requests (0 = liên tục cho tới khi Ctrl+C)")
-    parser.add_argument("--concurrency", type=int, default=1, help="Số worker gửi đồng thời (mặc định 1)")
-    parser.add_argument("--delay", type=float, default=0.5, help="Khoảng nghỉ giữa các lần gửi (giây, mặc định 0.5s = ~2 req/s)")
+    parser.add_argument("--concurrency", type=int, default=1, help="Số worker gửi đồng thời (cho chế độ batch)")
+    parser.add_argument("--delay", type=float, default=0.4, help="Khoảng nghỉ giữa các lần gửi (giây, mặc định 0.4s = ~2.5 req/s)")
     args = parser.parse_args()
 
     if args.requests > 0:
@@ -175,8 +176,8 @@ async def main_async():
     else:
         await run_traffic_continuous(
             target_url=args.url,
-            concurrency=args.concurrency,
             delay=args.delay,
+            concurrency=args.concurrency,
         )
 
 

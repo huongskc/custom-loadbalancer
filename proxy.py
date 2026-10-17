@@ -87,6 +87,7 @@ def log_access_event(
     status: int,
     algo: str,
     decision: str = "",
+    decision_snapshot: Optional[Dict] = None,
 ):
     """Ghi nhận sự kiện truy cập chuẩn hóa dạng JSONL vào logs/access.log cho Dashboard."""
     event_data = {
@@ -98,6 +99,7 @@ def log_access_event(
         "status": status,
         "algo": algo,
         "decision": decision,
+        "snapshot": decision_snapshot,
     }
     access_logger.info(json.dumps(event_data))
 
@@ -140,6 +142,10 @@ async def handle_request(request: web.Request) -> web.Response:
             log_access_event(request, client_ip, "None", 503, balancer.name, "NO_HEALTHY_BACKEND")
             return web.json_response({"error": "No healthy backend available"}, status=503)
 
+        # Chụp lại trạng thái quyết định tại đúng thời điểm lựa chọn (chính xác active_conns & score)
+        decision_ctx = balancer.explain_decision(client_ip, backend)
+        decision_snapshot = balancer.get_visualizer_state()
+
         try:
             # Context manager theo dõi kết nối đồng thời (phục vụ Least Connections / giám sát tải)
             with backend.track_connection():
@@ -167,12 +173,11 @@ async def handle_request(request: web.Request) -> web.Response:
                         continue
 
                     backend.requests_count += 1
-                    decision_ctx = balancer.explain_decision(client_ip, backend)
                     if decision_ctx:
                         resp_headers["X-Balancer-Decision"] = decision_ctx
 
-                    # Ghi nhận event vào logs/access.log phục vụ Dashboard quan sát độc lập
-                    log_access_event(request, client_ip, backend.id, upstream.status, balancer.name, decision_ctx)
+                    # Ghi nhận event vào logs/access.log phục vụ Dashboard quan sát độc lập kèm snapshot trạng thái
+                    log_access_event(request, client_ip, backend.id, upstream.status, balancer.name, decision_ctx, decision_snapshot)
 
                     logger.debug(
                         f"[PROXY] {request.method} {request.rel_url} [Client: {client_ip}] {decision_ctx} "
@@ -245,6 +250,17 @@ async def handle_change_algorithm(request: web.Request) -> web.Response:
         "algorithm": new_algo,
         "message": f"Successfully switched to {new_algo}",
     })
+
+
+async def handle_get_balancer_state(request: web.Request) -> web.Response:
+    """
+    Control API: Trả về trạng thái chi tiết của thuật toán cân bằng tải hiện tại
+    phục vụ Algorithm Visualizer trên Web Dashboard.
+    """
+    balancer: BaseBalancer = request.app[BALANCER_KEY]
+    state = balancer.get_visualizer_state()
+    state["algorithm"] = balancer.name
+    return web.json_response(state)
 
 
 async def handle_manage_backend(request: web.Request) -> web.Response:
@@ -342,6 +358,42 @@ async def handle_manage_backend(request: web.Request) -> web.Response:
     return web.json_response({"error": f"Unknown action '{action}'. Available: 'add', 'weight', 'reset'"}, status=400)
 
 
+async def handle_update_backend_status(request: web.Request) -> web.Response:
+    """
+    Control API: Cập nhật trạng thái sống/chết (alive=True/False) cho một backend node tại runtime.
+    Giúp đồng bộ ngay lập tức khi người dùng tiêm sự cố (chaos down/up) từ Dashboard.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+
+    port = data.get("port")
+    b_id = data.get("id")
+    alive = data.get("alive")
+
+    if alive is None:
+        return web.json_response({"error": "Missing 'alive' boolean"}, status=400)
+
+    balancer: BaseBalancer = request.app[BALANCER_KEY]
+    found = False
+    for b in balancer.backends:
+        if (port and b.port == int(port)) or (b_id and b.id == str(b_id)):
+            balancer.update_backend_status(b.id, bool(alive))
+            found = True
+            logger.info(f"[CONTROL] Updated backend {b.id} (port {b.port}) status to alive={alive}")
+            break
+
+    if not found:
+        return web.json_response({"error": "Backend not found"}, status=404)
+
+    return web.json_response({
+        "status": "ok",
+        "message": f"Updated backend status to alive={alive}",
+        "balancer_state": balancer.get_visualizer_state(),
+    })
+
+
 def create_app(
     config: Optional[dict] = None,
     balancer: Optional[BaseBalancer] = None,
@@ -379,8 +431,10 @@ def create_app(
     app.on_cleanup.append(on_cleanup)
 
     # Đăng ký Control API trước catch-all route
+    app.router.add_get("/api/balancer/state", handle_get_balancer_state)
     app.router.add_post("/api/algorithm", handle_change_algorithm)
     app.router.add_post("/api/backend", handle_manage_backend)
+    app.router.add_post("/api/backend/status", handle_update_backend_status)
 
     # Đăng ký bắt toàn bộ mọi HTTP methods và URL paths
     app.router.add_route("*", "/{path:.*}", handle_request)
