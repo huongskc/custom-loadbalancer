@@ -25,7 +25,9 @@ class LeastConnectionsBalancer(BaseBalancer):
         min_score = min(self._score(b) for b in alive)
         candidates = [b for b in alive if self._score(b) == min_score]
 
-        chosen = candidates[self._tie_counter % len(candidates)]
+        # Phá vỡ thế hòa bằng Weighted Round Robin (tương tự chuẩn Nginx / HAProxy)
+        weighted_candidates = [b for b in candidates for _ in range(max(1, b.weight))]
+        chosen = weighted_candidates[self._tie_counter % len(weighted_candidates)]
         self._tie_counter += 1
         return chosen
 
@@ -40,3 +42,24 @@ class LeastConnectionsBalancer(BaseBalancer):
             score = self._score(chosen)
             return f"LEAST_CONN[{chosen.id} score={score:.2f} ({conns_info})]"
         return "conns: " + conns_info
+
+    def get_visualizer_state(self) -> dict:
+        alive = self.get_alive_backends()
+        min_score = min((self._score(b) for b in alive), default=0.0) if alive else 0.0
+        backends_info = []
+        for b in self.backends:
+            score = round(self._score(b), 2)
+            backends_info.append({
+                "id": b.id,
+                "port": b.port,
+                "weight": b.weight,
+                "active_conns": b.active_conns,
+                "score": score,
+                "alive": b.alive,
+                "is_lowest": b.alive and (score == min_score),
+            })
+        return {
+            "type": "least_connections",
+            "min_score": round(min_score, 2),
+            "backends": backends_info,
+        }

@@ -334,6 +334,63 @@ def test_proxy_change_algorithm_invalid():
     print("  [PASS] test_proxy_change_algorithm_invalid")
 
 
+def test_proxy_get_balancer_state():
+    """Kiểm thử Control API GET /api/balancer/state trả về dữ liệu cho visualizer."""
+    async def _test():
+        b1 = Backend(id="b1", host="127.0.0.1", port=9001, weight=2)
+        lb = ConsistentHashBalancer([b1], vnodes=2)
+        proxy_runner, proxy_url = await start_proxy_server(lb)
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{proxy_url}/api/balancer/state") as resp:
+                    assert resp.status == 200
+                    data = await resp.json()
+                    assert data["algorithm"] == "consistent_hash"
+                    assert data["type"] == "consistent_hash"
+                    assert "ring" in data
+                    assert len(data["ring"]) == 4  # weight 2 * vnodes 2
+        finally:
+            await proxy_runner.cleanup()
+
+def test_proxy_update_backend_status():
+    """Kiểm thử Control API POST /api/backend/status cập nhật tức thì trạng thái backend và vòng băm."""
+    async def _test():
+        b1 = Backend(id="b1", host="127.0.0.1", port=9001, weight=1)
+        b2 = Backend(id="b2", host="127.0.0.1", port=9002, weight=1)
+        lb = ConsistentHashBalancer([b1, b2], vnodes=2)
+        proxy_runner, proxy_url = await start_proxy_server(lb)
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                # 1. Đánh sập b1 qua port 9001
+                async with session.post(f"{proxy_url}/api/backend/status", json={"port": 9001, "alive": False}) as resp:
+                    assert resp.status == 200
+                    data = await resp.json()
+                    assert data["status"] == "ok"
+                    assert b1.alive is False
+                    # Ring chỉ còn b2 còn alive
+                    alive_vnodes = [v for v in data["balancer_state"]["ring"] if v["alive"]]
+                    assert len(alive_vnodes) == 2  # Chỉ b2 (weight 1 * 2)
+
+                # 2. Khôi phục b1
+                async with session.post(f"{proxy_url}/api/backend/status", json={"id": "b1", "alive": True}) as resp:
+                    assert resp.status == 200
+                    data = await resp.json()
+                    assert b1.alive is True
+                    alive_vnodes = [v for v in data["balancer_state"]["ring"] if v["alive"]]
+                    assert len(alive_vnodes) == 4
+
+                # 3. Port không tồn tại
+                async with session.post(f"{proxy_url}/api/backend/status", json={"port": 9999, "alive": True}) as resp:
+                    assert resp.status == 404
+        finally:
+            await proxy_runner.cleanup()
+
+    asyncio.run(_test())
+    print("  [PASS] test_proxy_update_backend_status")
+
+
 if __name__ == "__main__":
     print("\n--- RUNNING REVERSE PROXY & PASSIVE FAILOVER INTEGRATION TESTS ---")
     test_proxy_forward_get_and_post()
@@ -343,4 +400,7 @@ if __name__ == "__main__":
     test_proxy_quarantine_recovery()
     test_proxy_change_algorithm_success()
     test_proxy_change_algorithm_invalid()
-    print("--- ALL 7 PROXY INTEGRATION TESTS PASSED SUCCESSFULLY! ---\n")
+    test_proxy_get_balancer_state()
+    test_proxy_update_backend_status()
+    print("--- ALL 9 PROXY INTEGRATION TESTS PASSED SUCCESSFULLY! ---\n")
+

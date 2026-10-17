@@ -129,6 +129,23 @@ def test_stats_aggregator_read_recent_events():
         temp_path.unlink(missing_ok=True)
 
 
+def test_stats_aggregator_uncapped_large_log():
+    """Kiểm tra đọc tệp log lớn (> 1000 events) không bị cắt ngọn ở 1000."""
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, encoding="utf-8") as f:
+        for i in range(1250):
+            f.write(f'{{"ts": {1000 + i}, "status": 200, "node": "mock-node-1"}}\n')
+        temp_path = Path(f.name)
+
+    try:
+        events = StatsAggregator.read_recent_events(temp_path)
+        assert len(events) == 1250
+        metrics = StatsAggregator.calculate_metrics(events)
+        assert metrics["total_requests"] == 1250
+        assert metrics["node_distribution"]["mock-node-1"]["count"] == 1250
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
 # ==============================================================================
 # 3. Kiểm thử ProcessManager & Dừng Cưỡng Chế (Force Kill)
 # ==============================================================================
@@ -177,6 +194,8 @@ def test_api_get_stats_empty():
                     assert "services" in data
                     assert "metrics" in data
                     assert "recent_events" in data
+                    assert "balancer_state" in data
+                    assert data["balancer_state"]["algorithm"] == data["active_algo"]
 
                     # Kiểm tra trạng thái mặc định
                     assert data["services"]["mock_servers"]["status"] == "stopped"
@@ -219,11 +238,43 @@ def test_api_control_traffic_start_and_stop():
                     res = await resp.json()
                     assert res["status"] == "ok"
                     assert pm.traffic_proc is None
+                    assert not pm.traffic_pid_file.exists()
         finally:
             pm.stop_all()
             await runner.cleanup()
 
     asyncio.run(_test())
+
+
+def test_traffic_persisted_pid_recovery_and_cleanup():
+    """Kiểm tra khôi phục nhận diện PID tiến trình sinh tải từ tệp logs/traffic.pid ngay cả khi dashboard bị reload."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_root = Path(tmp_dir)
+        pm = ProcessManager(project_root=tmp_root)
+        dummy_proc = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            # Giả lập dashboard bị restart: traffic_proc là None nhưng traffic.pid còn ghi PID đang sống
+            pm.traffic_proc = None
+            pm.traffic_pid_file.parent.mkdir(parents=True, exist_ok=True)
+            pm.traffic_pid_file.write_text(str(dummy_proc.pid), encoding="utf-8")
+
+            # get_process_status phải phát hiện ra tiến trình đang chạy từ PID file
+            status = pm.get_process_status()
+            assert status["traffic"]["status"] == "running"
+            assert status["traffic"]["pid"] == dummy_proc.pid
+
+            # force_kill phải tiêu diệt tiến trình và xoá file PID
+            killed = pm.force_kill("traffic")
+            assert killed is True
+            assert not pm.traffic_pid_file.exists()
+            assert dummy_proc.poll() is not None
+        finally:
+            if dummy_proc.poll() is None:
+                dummy_proc.kill()
 
 
 def test_api_control_algorithm_and_chaos_error_handling():
@@ -311,5 +362,36 @@ def test_mock_and_proxy_process_lifecycle():
             assert is_port_open(9001) is False
         finally:
             pm.stop_all()
+
+    asyncio.run(_test())
+
+
+def test_api_events_stream():
+    """Kiểm tra SSE endpoint GET /api/events/stream đẩy sự kiện thời gian thực khi có log mới."""
+    async def _test():
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, encoding="utf-8") as f:
+            temp_path = Path(f.name)
+
+        pm = ProcessManager()
+        runner, port, base_url = await start_dashboard_test_server(pm=pm, log_path=temp_path)
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{base_url}/api/events/stream") as resp:
+                    assert resp.status == 200
+                    assert "text/event-stream" in resp.headers.get("Content-Type", "")
+
+                    # Ghi 1 dòng event vào log file
+                    with open(temp_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps({"ts": 123, "node": "mock-1", "algo": "consistent_hash"}) + "\n")
+                        f.flush()
+
+                    # Đọc dòng đầu tiên nhận được từ SSE stream
+                    line = await asyncio.wait_for(resp.content.readline(), timeout=3.0)
+                    assert len(line) > 0
+                    resp.close()
+        finally:
+            await runner.cleanup()
+            temp_path.unlink(missing_ok=True)
 
     asyncio.run(_test())

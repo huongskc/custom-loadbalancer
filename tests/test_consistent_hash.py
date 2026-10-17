@@ -186,6 +186,30 @@ def test_bisect_left_exact_match():
     print("  [PASS] test_bisect_left_exact_match")
 
 
+def test_get_ring_state_and_visualizer():
+    """Kiểm tra trích xuất ring state với vnodes=2 cho Algorithm Visualizer."""
+    b1 = Backend(id="node-1", host="127.0.0.1", port=9001, weight=5)
+    b2 = Backend(id="node-2", host="127.0.0.1", port=9002, weight=1)
+    lb = ConsistentHashBalancer([b1, b2], vnodes=2)
+
+    ring = lb.get_ring_state()
+    # node-1: 2*5 = 10 vnodes, node-2: 2*1 = 2 vnodes -> 12 vnodes
+    assert len(ring) == 12
+    # Đã được sắp xếp theo hash tăng dần
+    hashes = [item["hash"] for item in ring]
+    assert hashes == sorted(hashes)
+    for item in ring:
+        assert "vnode" in item
+        assert "angle_deg" in item
+        assert 0.0 <= item["angle_deg"] <= 360.0
+        assert item["alive"] is True
+
+    vis = lb.get_visualizer_state()
+    assert vis["type"] == "consistent_hash"
+    assert vis["vnodes_per_weight"] == 2
+    assert len(vis["ring"]) == 12
+
+
 if __name__ == "__main__":
     print(">>> Running Consistent Hashing Tests...")
     test_determinism_sticky_routing()
@@ -196,5 +220,7 @@ if __name__ == "__main__":
     test_x_forwarded_for_parsing()
     test_explain_decision()
     test_bisect_left_exact_match()
+    test_get_ring_state_and_visualizer()
     print(">>> ALL CONSISTENT HASHING TESTS PASSED [100%]\n")
+
 
