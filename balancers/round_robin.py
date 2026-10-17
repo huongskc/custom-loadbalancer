@@ -30,3 +30,21 @@ class RoundRobinBalancer(BaseBalancer):
             return "ROUND_ROBIN[no_alive_backend]"
         pos = alive.index(chosen) + 1 if chosen in alive else "?"
         return f"ROUND_ROBIN[step={pos}/{len(alive)}->{chosen.id}]"
+
+    def get_visualizer_state(self) -> dict:
+        alive = self.get_alive_backends()
+        steps = []
+        for idx, b in enumerate(alive):
+            steps.append({
+                "id": b.id,
+                "port": b.port,
+                "weight": b.weight,
+                "step": idx + 1,
+                "is_current": (idx == (self.current_index % len(alive))) if alive else False,
+            })
+        return {
+            "type": "round_robin",
+            "total_alive": len(alive),
+            "current_index": self.current_index,
+            "steps": steps,
+        }

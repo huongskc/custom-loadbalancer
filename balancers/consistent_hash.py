@@ -15,7 +15,7 @@ class ConsistentHashBalancer(BaseBalancer):
     Thuật toán Cân bằng tải Consistent Hashing hỗ trợ Virtual Nodes.
     """
 
-    def __init__(self, backends: List[Backend], vnodes: int = 100):
+    def __init__(self, backends: List[Backend], vnodes: int = 2):
         super().__init__(backends, name="consistent_hash")
         self.vnodes = vnodes
         self._ring: Dict[int, Backend] = {}
@@ -88,5 +88,39 @@ class ConsistentHashBalancer(BaseBalancer):
         prev_vnode = self._ring_vnodes.get(prev_hash, "unknown")
 
         return f"{prev_vnode}|0x{prev_hash:08x}|0x{ip_h:08x}|{cw_vnode}|0x{cw_hash:08x}"
+
+    def get_ring_state(self) -> List[Dict]:
+        """
+        Trích xuất thông số các Virtual Nodes phục vụ hiển thị Vòng tròn băm 360 độ:
+        Bao gồm cả node đang sống (alive=True) và node sập (alive=False).
+        """
+        items = []
+        total_space = 2**32
+        for backend in self.backends:
+            num_vnodes = self.vnodes * max(1, backend.weight)
+            for i in range(num_vnodes):
+                vnode_key = f"{backend.id}#vn{i}"
+                h = self._hash(vnode_key)
+                angle_deg = round((h / total_space) * 360, 2)
+                items.append({
+                    "vnode": vnode_key,
+                    "hash": h,
+                    "hex": f"0x{h:08x}",
+                    "angle_deg": angle_deg,
+                    "backend_id": backend.id,
+                    "backend_port": backend.port,
+                    "weight": backend.weight,
+                    "alive": backend.alive,
+                })
+        items.sort(key=lambda x: x["hash"])
+        return items
+
+    def get_visualizer_state(self) -> dict:
+        return {
+            "type": "consistent_hash",
+            "vnodes_per_weight": self.vnodes,
+            "total_vnodes": len(self._sorted_keys),
+            "ring": self.get_ring_state(),
+        }
 
 

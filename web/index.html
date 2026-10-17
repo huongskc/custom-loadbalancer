@@ -30,8 +30,8 @@ main{display:grid;grid-template-columns:minmax(280px,340px) 1fr;gap:16px;padding
 @media (max-width:860px){main{grid-template-columns:1fr;padding:12px}}
 .col{display:flex;flex-direction:column;gap:16px;min-width:0}
 section{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px;min-width:0}
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
-@media (max-width:600px){.kpis{grid-template-columns:repeat(2,1fr)}}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media (max-width:600px){.kpis{grid-template-columns:1fr}}
 .kpi b{display:block;font-size:26px;font-weight:600;line-height:1.1}
 .kpi span{color:var(--muted);font-size:13px}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
@@ -45,6 +45,7 @@ button{padding:6px 12px;border:1px solid var(--line);border-radius:4px;backgroun
 button:hover{border-color:var(--accent)}
 button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 button.danger{color:var(--bad);border-color:var(--bad)}
+button:disabled{opacity:0.45;cursor:not-allowed;pointer-events:none}
 button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .seg{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden;width:100%}
 .seg button{flex:1;border:0;border-radius:0;border-right:1px solid var(--line);padding:8px 4px;font-size:13px}
@@ -72,6 +73,19 @@ td.mono,.mono{font-family:var(--mono);font-size:12px}
 #toast.show{opacity:1}
 #toast.err{background:var(--bad);color:#fff}
 @media (prefers-reduced-motion:reduce){#toast{transition:none}}
+.vis-card{width:100%;display:flex;flex-direction:column;align-items:center;gap:12px}
+.vis-ring-wrap{position:relative;display:flex;justify-content:center;align-items:center;width:100%;max-width:520px;margin:0 auto}
+.vis-ring-svg{width:100%;max-width:480px;height:auto;overflow:visible}
+.vis-box{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:8px 12px;font-family:var(--mono);font-size:12px;width:100%;text-align:center;word-break:break-all}
+.vis-lc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;width:100%}
+.vis-lc-card{border:1px solid var(--line);border-radius:6px;padding:12px;background:var(--panel);transition:border-color .2s}
+.vis-lc-card.lowest{border:2px solid var(--accent);background:var(--bg)}
+.vis-badge{font-size:11px;font-weight:700;color:var(--accent);display:inline-block;margin-bottom:4px}
+.vis-rr-steps{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;width:100%;padding:16px 0}
+.vis-rr-step{border:1px solid var(--line);border-radius:6px;padding:12px 18px;text-align:center;min-width:130px;background:var(--panel)}
+.vis-rr-step.active{border:2px solid var(--accent);background:var(--bg)}
+.vis-ticker-item{padding:5px 8px;border-bottom:1px solid var(--line);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vis-ticker-item:last-child{border-bottom:0}
 </style>
 </head>
 <body>
@@ -100,8 +114,7 @@ td.mono,.mono{font-family:var(--mono);font-size:12px}
     <section>
       <h2>Sinh tải</h2>
       <div class="row">
-        <label>Luồng <input type="number" id="t-conc" value="1" min="1"></label>
-        <label>Giãn cách (s) <input type="number" id="t-delay" value="0.4" min="0.01" step="0.05"></label>
+        <label>Giãn cách (s) <input type="number" id="t-delay" value="0.4" min="0.01" step="0.05" style="width:100px;"></label>
       </div>
       <div class="row"><button class="primary" id="t-start">Bắt đầu</button><button id="t-stop">Dừng</button></div>
     </section>
@@ -140,7 +153,6 @@ td.mono,.mono{font-family:var(--mono);font-size:12px}
       <div class="kpis">
         <div class="kpi"><b id="k-rps">0</b><span>request/giây (5s)</span></div>
         <div class="kpi"><b id="k-total">0</b><span>tổng request</span></div>
-        <div class="kpi"><b id="k-succ">100%</b><span>thành công</span></div>
         <div class="kpi"><b id="k-algo">-</b><span>thuật toán đang chạy</span></div>
       </div>
     </section>
@@ -150,15 +162,20 @@ td.mono,.mono{font-family:var(--mono);font-size:12px}
       <div class="nodes" id="nodes"></div>
     </section>
 
-    <section>
-      <h2>20 request gần nhất</h2>
-      <div class="tablewrap">
-        <table>
-          <thead><tr><th>Giờ</th><th>Client</th><th>Đường dẫn</th><th>Node</th><th>Mã</th><th>Quyết định</th></tr></thead>
-          <tbody id="events"></tbody>
-        </table>
+    <section id="vis-section">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+        <h2>Trực quan hóa quyết định thuật toán</h2>
+        <span id="vis-algo-badge" class="chip on" style="font-size:12px; font-weight:600">CONSISTENT HASH</span>
       </div>
-      <div class="empty" id="events-empty">Chưa có request nào. Bật mock, proxy rồi bắt đầu sinh tải.</div>
+      <div id="vis-stage" style="min-height:360px; display:flex; align-items:center; justify-content:center; width:100%;">
+        <div class="empty">Đang tải trạng thái thuật toán...</div>
+      </div>
+      <div style="margin-top:14px; border-top:1px solid var(--line); padding-top:10px;">
+        <div style="font-size:12px; font-weight:600; color:var(--muted); margin-bottom:6px;">Nhật ký request thời gian thực (3 request gần nhất)</div>
+        <div id="vis-ticker" class="mono" style="background:var(--bg); border:1px solid var(--line); border-radius:4px; overflow:hidden;">
+          <div class="empty" style="padding:8px 12px;">Chưa có request nào. Bật mock, proxy và bắt đầu sinh tải.</div>
+        </div>
+      </div>
     </section>
   </div>
 </main>
@@ -205,6 +222,201 @@ function chip(label, running) {
   return `<span class="chip ${running ? "on" : ""}"><span class="dot"></span>${label}: ${running ? "đang chạy" : "đã dừng"}</span>`;
 }
 
+const PALETTE = [
+  "#0e7a6b", // teal
+  "#d97706", // amber
+  "#6366f1", // indigo
+  "#e11d48", // rose
+  "#0284c7", // sky
+  "#8b5cf6", // violet
+  "#10b981", // emerald
+  "#f97316", // orange
+  "#ec4899", // pink
+  "#14b8a6", // light teal
+  "#3b82f6", // blue
+  "#84cc16"  // lime
+];
+function getNodeColor(id) {
+  if (!id) return PALETTE[0];
+  const m = String(id).match(/\d+/);
+  if (m) {
+    const num = parseInt(m[0], 10);
+    return PALETTE[(num - 1) % PALETTE.length];
+  }
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash << 5) - hash + id.charCodeAt(i);
+  return PALETTE[Math.abs(hash) % PALETTE.length];
+}
+
+function renderConsistentHash(stage, bState, lastEvent) {
+  const ring = (bState && bState.ring) || [];
+  if (!ring.length) {
+    stage.innerHTML = `<div class="empty">Chưa có dữ liệu Virtual Nodes. Khởi động Proxy để tải vòng băm.</div>`;
+    return;
+  }
+  const cx = 230, cy = 230, R = 160;
+  let dotsSvg = "";
+  ring.forEach(v => {
+    const rad = ((v.angle_deg - 90) * Math.PI) / 180;
+    const vx = cx + R * Math.cos(rad);
+    const vy = cy + R * Math.sin(rad);
+    const col = v.alive ? getNodeColor(v.backend_id) : "#64748b";
+    const labelRad = rad;
+    const lx = cx + (R + 25) * Math.cos(labelRad);
+    const ly = cy + (R + 25) * Math.sin(labelRad);
+    const shortLabel = v.vnode.replace("mock-node-", "n");
+    const strokeAttr = v.alive ? `stroke="var(--panel)" stroke-width="1.2"` : `stroke="#ef4444" stroke-width="1.8" stroke-dasharray="2,2"`;
+    dotsSvg += `<circle cx="${vx.toFixed(1)}" cy="${vy.toFixed(1)}" r="6.5" fill="${col}" ${strokeAttr}><title>${esc(v.vnode)} (${v.hex}) - ${v.alive ? 'UP' : 'DOWN'}</title></circle>`;
+    dotsSvg += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" font-size="11" font-family="var(--mono)" font-weight="600" fill="${col}" text-anchor="middle" dominant-baseline="central">${esc(shortLabel)}</text>`;
+  });
+
+  let clientSvg = "";
+  if (lastEvent && lastEvent.decision && lastEvent.decision.includes("|")) {
+    const parts = lastEvent.decision.split("|");
+    if (parts.length === 5) {
+      const [prev_vn, prev_h, ip_h, cw_vn, cw_h] = parts;
+      const ipInt = parseInt(ip_h, 16);
+      const cwInt = parseInt(cw_h, 16);
+      if (!isNaN(ipInt) && !isNaN(cwInt)) {
+        const ipDeg = (ipInt / 4294967296) * 360 - 90;
+        const cwDeg = (cwInt / 4294967296) * 360 - 90;
+        const ipRad = (ipDeg * Math.PI) / 180;
+        const cwRad = (cwDeg * Math.PI) / 180;
+        const ipX = cx + R * Math.cos(ipRad);
+        const ipY = cy + R * Math.sin(ipRad);
+        const cwX = cx + R * Math.cos(cwRad);
+        const cwY = cy + R * Math.sin(cwRad);
+
+        let deltaDeg = (cwDeg - ipDeg + 360) % 360;
+        if (deltaDeg === 0) deltaDeg = 360;
+        const largeArc = deltaDeg > 180 ? 1 : 0;
+        const sweepPath = `M ${ipX.toFixed(1)} ${ipY.toFixed(1)} A ${R} ${R} 0 ${largeArc} 1 ${cwX.toFixed(1)} ${cwY.toFixed(1)}`;
+
+        clientSvg += `<path d="${sweepPath}" fill="none" stroke="var(--accent)" stroke-width="5" stroke-linecap="round" opacity="0.9"/>`;
+        clientSvg += `<circle cx="${ipX.toFixed(1)}" cy="${ipY.toFixed(1)}" r="8" fill="var(--ink)" stroke="var(--accent)" stroke-width="3"><title>Client IP: ${esc(lastEvent.client_ip)} (hash: ${ip_h})</title></circle>`;
+        clientSvg += `<text x="${ipX.toFixed(1)}" y="${(ipY - 16).toFixed(1)}" font-size="11" font-family="var(--mono)" font-weight="700" fill="var(--ink)" text-anchor="middle">IP: ${esc(lastEvent.client_ip)}</text>`;
+      }
+    }
+  }
+
+  stage.innerHTML = `
+    <div class="vis-card">
+      <div class="vis-ring-wrap">
+        <svg class="vis-ring-svg" viewBox="0 0 460 460">
+          <circle cx="${cx}" cy="${cy}" r="${R}" stroke="var(--line)" stroke-width="2.5" fill="none"/>
+          <text x="${cx}" y="${cy - 14}" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink)">VÒNG BĂM 360°</text>
+          <text x="${cx}" y="${cy + 8}" text-anchor="middle" font-size="11" font-family="var(--mono)" fill="var(--muted)">[0, 2^32 - 1]</text>
+          <text x="${cx}" y="${cy + 26}" text-anchor="middle" font-size="11" fill="var(--muted)">${ring.length} Virtual Nodes</text>
+          ${clientSvg}
+          ${dotsSvg}
+        </svg>
+      </div>
+    </div>
+  `;
+}
+
+function renderLeastConnections(stage, bState, lastEvent) {
+  const backends = (bState && bState.backends) || [];
+  if (!backends.length) {
+    stage.innerHTML = `<div class="empty">Chưa có thông số Least Connections. Khởi động Proxy.</div>`;
+    return;
+  }
+
+  const cardsHtml = backends.map(b => {
+    const isLowest = b.is_lowest;
+    const col = getNodeColor(b.id);
+    const borderClass = isLowest ? "vis-lc-card lowest" : "vis-lc-card";
+    const statusText = b.alive ? "[UP]" : "[DOWN]";
+    const statusClass = b.alive ? "s-ok" : "s-bad";
+    const badgeText = isLowest ? `<span class="vis-badge">[THAP NHAT - DUOC CHON]</span>` : `<span style="font-size:11px; color:var(--muted); visibility:hidden;">[BINH THUONG]</span>`;
+    const barWidth = Math.min(100, (b.active_conns / 5) * 100);
+    return `
+      <div class="${borderClass}">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <h3 style="margin:0; font-size:14px; font-weight:600;">${esc(b.id)}</h3>
+          <span class="${statusClass}" style="font-size:12px; font-weight:700;">${statusText}</span>
+        </div>
+        ${badgeText}
+        <div style="margin-top:6px; font-size:12px; color:var(--muted);">Cổng: ${b.port} | Trọng số W: <b>${b.weight}</b></div>
+        <div style="margin-top:6px;">
+          <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:2px;">
+            <span>Kết nối đang xử lý:</span>
+            <b class="mono" style="font-size:14px;">${b.active_conns}</b>
+          </div>
+          <div class="bar" style="margin:4px 0;"><i style="width:${barWidth}%; background:${col};"></i></div>
+        </div>
+        <div style="margin-top:8px; padding-top:6px; border-top:1px dashed var(--line); display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:12px; color:var(--muted);">Điểm tải (Conns/W):</span>
+          <span class="mono" style="font-size:15px; font-weight:700; color:${isLowest ? 'var(--accent)' : 'inherit'};">${b.score.toFixed(2)}</span>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  stage.innerHTML = `
+    <div class="vis-card" style="align-items:stretch;">
+      <div class="vis-lc-grid">
+        ${cardsHtml}
+      </div>
+    </div>
+  `;
+}
+
+function renderRoundRobin(stage, bState, lastEvent) {
+  const steps = (bState && bState.steps) || [];
+  if (!steps.length) {
+    stage.innerHTML = `<div class="empty">Chưa có thông số Round Robin. Khởi động Proxy.</div>`;
+    return;
+  }
+
+  const stepsHtml = steps.map(s => {
+    const isCur = s.is_current;
+    const badgeText = isCur ? `<div style="font-size:11px; font-weight:700; color:var(--accent); margin-bottom:4px;">[CON TRO HIEN TAI]</div>` : `<div style="font-size:11px; color:var(--muted); margin-bottom:4px; visibility:hidden;">[CHO LUOT]</div>`;
+    return `
+      <div class="vis-rr-step ${isCur ? 'active' : ''}">
+        ${badgeText}
+        <div style="font-size:12px; color:var(--muted);">Bước ${s.step}</div>
+        <div style="font-size:14px; font-weight:600; margin-top:2px;">${esc(s.id)}</div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px;">Cổng ${s.port}</div>
+      </div>
+    `;
+  }).join(`<div style="font-size:16px; font-weight:700; color:var(--muted);">--&gt;</div>`);
+
+  stage.innerHTML = `
+    <div class="vis-card" style="align-items:stretch;">
+      <div class="vis-rr-steps">
+        ${stepsHtml}
+      </div>
+    </div>
+  `;
+}
+
+function renderMiniTicker(ev) {
+  const tickerEl = $("#vis-ticker");
+  if (!tickerEl) return;
+  if (!ev || !ev.length) {
+    tickerEl.innerHTML = `<div class="empty" style="padding:8px 12px;">Chưa có request nào. Bật mock, proxy và bắt đầu sinh tải.</div>`;
+    return;
+  }
+  const top3 = ev.slice(0, 3);
+  tickerEl.innerHTML = top3.map(e => {
+    const ok = e.status >= 200 && e.status < 400;
+    const statusClass = ok ? "s-ok" : "s-bad";
+    const timeStr = new Date(e.ts * 1000).toLocaleTimeString("vi-VN");
+    const decStr = e.decision ? ` | [${esc(fmtDecision(e.decision))}]` : "";
+    return `
+      <div class="vis-ticker-item">
+        <span style="color:var(--muted);">${timeStr}</span>
+        <span style="margin:0 4px;">|</span>
+        <b>${esc(e.client_ip)}</b> --&gt; <b>${esc(e.node)}</b>
+        <span style="margin:0 4px;">|</span>
+        <span class="${statusClass}">HTTP ${e.status}</span>
+        <span style="color:var(--muted);">${decStr}</span>
+      </div>
+    `;
+  }).join("");
+}
+
 function setNodeOptions(nodes) {
   const key = Object.keys(nodes).join(",");
   if (key === nodeKey) return;
@@ -217,6 +429,27 @@ function setNodeOptions(nodes) {
   }
 }
 
+let cachedBalancerState = null;
+let cachedLastEvent = null;
+let tickerBuffer = [];
+
+function renderVisualizer(algo, bState, lastEvent) {
+  const stage = $("#vis-stage");
+  const badge = $("#vis-algo-badge");
+  const currentAlgo = algo || (bState && (bState.algorithm || bState.type)) || "consistent_hash";
+  if (badge) badge.textContent = currentAlgo.toUpperCase().replace("_", " ");
+
+  if (stage) {
+    if (currentAlgo === "least_connections") {
+      renderLeastConnections(stage, bState, lastEvent);
+    } else if (currentAlgo === "round_robin") {
+      renderRoundRobin(stage, bState, lastEvent);
+    } else {
+      renderConsistentHash(stage, bState, lastEvent);
+    }
+  }
+}
+
 function render(s) {
   const svc = s.services, m = s.metrics;
   $("#chips").innerHTML = chip("Mock", svc.mock_servers.status === "running") +
@@ -226,9 +459,14 @@ function render(s) {
   $("#btn-proxy").textContent = svc.proxy.status === "running" ? "Dừng" : "Khởi động";
   $("#btn-proxy").className = svc.proxy.status === "running" ? "danger" : "primary";
 
+  const trafficRunning = svc.traffic.status === "running";
+  $("#t-start").disabled = trafficRunning;
+  $("#t-start").className = trafficRunning ? "" : "primary";
+  $("#t-stop").disabled = !trafficRunning;
+  $("#t-stop").className = trafficRunning ? "danger" : "";
+
   $("#k-rps").textContent = m.rps;
   $("#k-total").textContent = m.total_requests;
-  $("#k-succ").textContent = m.success_pct + "%";
   $("#k-algo").textContent = s.active_algo;
   const algo = pendingAlgo || s.active_algo;
   if (pendingAlgo && s.active_algo === pendingAlgo) pendingAlgo = null;
@@ -244,18 +482,19 @@ function render(s) {
       <h3>${esc(id)} <span class="state">${n.alive ? "UP" : "DOWN"}</span></h3>
       <small>cổng ${n.port}</small>
       <div class="bar"><i style="width:${pct}%"></i></div>
-      <div class="meta"><span>${pct}% tải (${cnt})</span><span>${n.alive ? n.latency_ms + " ms" : "HTTP " + n.status_code}</span></div>
+      <div class="meta"><span>${pct}% tải (${cnt})</span><span>Trọng số: ${n.weight || 1}</span></div>
     </div>`;
   }).join("") || `<div class="empty">Chưa có node nào. Khởi động mock servers.</div>`;
 
-  const ev = s.recent_events || [];
-  $("#events-empty").style.display = ev.length ? "none" : "block";
-  $("#events").innerHTML = ev.map(e => {
-    const ok = e.status >= 200 && e.status < 400;
-    return `<tr><td>${new Date(e.ts * 1000).toLocaleTimeString("vi-VN")}</td><td class="mono">${esc(e.client_ip)}</td>
-      <td class="mono">${esc(e.path)}</td><td>${esc(e.node)}</td>
-      <td class="${ok ? "s-ok" : "s-bad"}">${e.status}</td><td class="mono">${esc(fmtDecision(e.decision))}</td></tr>`;
-  }).join("");
+  if (s.balancer_state) cachedBalancerState = s.balancer_state;
+  if (!cachedLastEvent && s.last_event) cachedLastEvent = s.last_event;
+
+  renderVisualizer(s.active_algo, cachedBalancerState, cachedLastEvent);
+
+  if (tickerBuffer.length === 0 && s.recent_events && s.recent_events.length > 0) {
+    tickerBuffer = s.recent_events.slice(0, 3);
+  }
+  renderMiniTicker(tickerBuffer.length ? tickerBuffer : (s.recent_events || []));
 }
 
 let failing = false;
@@ -270,13 +509,44 @@ async function poll() {
   }
 }
 
+function initSSE() {
+  try {
+    const es = new EventSource("/api/events/stream");
+    es.onmessage = e => {
+      try {
+        if (!e.data || e.data.startsWith(":")) return;
+        const evt = JSON.parse(e.data);
+        cachedLastEvent = evt;
+        if (evt.snapshot) cachedBalancerState = evt.snapshot;
+        if (evt.algo) {
+          $("#k-algo").textContent = evt.algo;
+        }
+
+        const activeAlgo = evt.algo || (cachedBalancerState && cachedBalancerState.algorithm) || "consistent_hash";
+        renderVisualizer(activeAlgo, cachedBalancerState, evt);
+
+        const totalEl = $("#k-total");
+        if (totalEl) totalEl.textContent = (parseInt(totalEl.textContent) || 0) + 1;
+
+        tickerBuffer.unshift(evt);
+        if (tickerBuffer.length > 3) tickerBuffer.pop();
+        renderMiniTicker(tickerBuffer);
+      } catch (err) {}
+    };
+    es.onerror = () => {
+      es.close();
+      setTimeout(initSSE, 3000);
+    };
+  } catch (err) {}
+}
+
 // Điều khiển dịch vụ: nút đổi giữa khởi động / dừng theo trạng thái hiện tại
 for (const [btn, name] of [["#btn-mock", "mock"], ["#btn-proxy", "proxy"]]) {
   $(btn).onclick = () => act(`/api/control/${name}`, {action: $(btn).textContent === "Dừng" ? "stop" : "start"});
 }
 $("#t-start").onclick = () => act("/api/control/traffic", {
-  action: "start", concurrency: +$("#t-conc").value || 1, delay: +$("#t-delay").value || 0.4, requests: 0});
-$("#t-stop").onclick = () => act("/api/control/traffic", {action: "stop"});
+  action: "start", delay: +$("#t-delay").value || 0.4, requests: 0});
+$("#t-stop").onclick = () => act("/api/control/traffic", {action: "stop"}, "Đã dừng sinh tải");
 
 document.querySelectorAll("#algos button").forEach(b => b.onclick = async () => {
   pendingAlgo = b.dataset.a;
@@ -308,6 +578,7 @@ $("#w-set").onclick = () => {
 };
 
 poll();
+initSSE();
 setInterval(poll, 1000);
 </script>
 </body>
